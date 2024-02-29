@@ -63,10 +63,14 @@ static cv::Mat preprocess_image(const cv::Mat& image, cv::Size size) {
 
 // preprocessing for resnet50
 static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
-  float mean[3] = {103.53f, 116.28f, 123.675f};
-  float scales[3] = {0.017429f, 0.017507f, 0.01712475f};
-  // mean value and scale are model specific, we need to check the
-  // model to get concrete value. For resnet50, they are {104, 107, 123}
+  // mean value and scale are dataset specific, we need to calculate them before running the model.
+  //float mean[3] = {103.53f, 116.28f, 123.675f}; // [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
+  //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; // [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
+  // These are the original values for DYB-PlanktonNet dataset --mean "0.0361, 0.0326, 0.0357" --std "0.0997, 0.0968, 0.0858".
+  // Below converted as stated in the first lines.
+  float mean[3] = {9.10f, 8.31f, 9.20f};
+  float scales[3] = {0.045706f, 0.040512f, 0.039334f};
+
   signed char* data1 = (signed char*)data;
   int c = 0;
   for (auto row = 0; row < image.rows; row++) {
@@ -150,15 +154,15 @@ int main(int argc, char* argv[]) {
   auto output_scale = get_output_scale(output_tensor);
 
   auto batch = input_tensor->get_shape().at(0);
-  auto height = input_tensor->get_shape().at(1);
-  auto width = input_tensor->get_shape().at(2);
+  auto height = input_tensor->get_shape().at(1); // 224 for resnet50
+  auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
   // loop for running input images
   for (auto i = 0; i < input_images.size(); i += batch) {
     auto run_batch = std::min(((int)input_images.size() - i), batch);
     auto images = std::vector<cv::Mat>(run_batch);
 
-    // preprocessing
+    // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
     uint64_t data_in = 0u;
     size_t size_in = 0u;
     for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
@@ -188,8 +192,7 @@ int main(int argc, char* argv[]) {
 
     // postprocessing
     for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-      auto topk =
-          post_process(output_tensor_buffers[0], output_scale, batch_idx);
+      auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
       // print the result
       print_topk(topk);
     }
@@ -229,8 +232,8 @@ static std::vector<float> softmax(const std::vector<float>& input) {
                  [sum](float v) { return v / sum; });
   return output;
 }
-static std::vector<std::pair<int, float>> topk(const std::vector<float>& score,
-                                               int K) {
+
+static std::vector<std::pair<int, float>> topk(const std::vector<float>& score, int K) {
   auto indices = std::vector<int>(score.size());
   std::iota(indices.begin(), indices.end(), 0);
   std::partial_sort(indices.begin(), indices.begin() + K, indices.end(),
@@ -255,7 +258,7 @@ static void print_topk(const std::vector<std::pair<int, float>>& topk) {
 
 static const char* lookup(int index) {
   static const char* table[] = {
-#include "word_list.inc"
+#include "plankton_list.inc"
   };
 
   if (index < 0) {
