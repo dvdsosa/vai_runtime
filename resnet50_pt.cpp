@@ -112,13 +112,19 @@ int main(int argc, char* argv[]) {
   auto xmodel_file = std::string(argv[1]);
   // read input images
   std::vector<cv::Mat> input_images;
-  for (auto i = 2; i < argc; i++) {
-    cv::Mat img = cv::imread(argv[i]);
-    if (img.empty()) {
-      std::cout << "Cannot load image : " << argv[i] << std::endl;
-      continue;
-    }
-    input_images.push_back(img);
+  std::ifstream file(argv[2]);
+  if (!file) {
+      std::cout << "Cannot open file : " << argv[2] << std::endl;
+      exit(EXIT_FAILURE);
+  }
+  std::string line;
+  while (std::getline(file, line)) {
+      cv::Mat img = cv::imread(line);
+      if (img.empty()) {
+          std::cout << "Cannot load image : " << line << std::endl;
+          continue;
+      }
+      input_images.push_back(img);
   }
   if (input_images.empty()) {
     std::cerr << "No image load success!" << std::endl;
