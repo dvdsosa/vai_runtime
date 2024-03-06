@@ -22,6 +22,7 @@
 #include <iostream>
 #include <memory>
 #include <numeric>
+#include <chrono>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -167,6 +168,8 @@ int main(int argc, char* argv[]) {
 
   // loop for running input images
   for (auto i = 0; i < input_images.size(); i += batch) {
+    auto start = std::chrono::high_resolution_clock::now();
+
     auto run_batch = std::min(((int)input_images.size() - i), batch);
     auto images = std::vector<cv::Mat>(run_batch);
 
@@ -207,6 +210,11 @@ int main(int argc, char* argv[]) {
       // print the result
       print_topk(topk);
     }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end-start;
+    double fps = 1.0 / diff.count();
+    std::cout << "FPS: " << fps << std::endl << std::endl;
   }
 
   return 0;
@@ -264,7 +272,8 @@ static void print_topk(const std::vector<std::pair<int, float>>& topk) {
               << " text: " << lookup(v.first) << std::resetiosflags(std::ios::left)
               << std::endl;
   }
-  std::cout << std::endl;
+  //commented so FPS: xx.xxxx data appears just below last line of accuracies.
+  //std::cout << std::endl;
 }
 
 static const char* lookup(int index) {
