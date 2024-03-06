@@ -117,6 +117,7 @@ int main(int argc, char* argv[]) {
       std::cout << "Cannot open file : " << argv[2] << std::endl;
       exit(EXIT_FAILURE);
   }
+  std::vector<std::string> lines;
   std::string line;
   while (std::getline(file, line)) {
       cv::Mat img = cv::imread(line);
@@ -125,6 +126,7 @@ int main(int argc, char* argv[]) {
           continue;
       }
       input_images.push_back(img);
+      lines.push_back(line);  // Store the line
   }
   if (input_images.empty()) {
     std::cerr << "No image load success!" << std::endl;
@@ -196,8 +198,11 @@ int main(int argc, char* argv[]) {
                                    output->get_tensor()->get_shape()[0]);
     }
 
+    std::cout << "Batch size: " << run_batch << "\n";
+
     // postprocessing
     for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+      std::cout << "Image name: " << lines[i + batch_idx] << "\n";
       auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
       // print the result
       print_topk(topk);
