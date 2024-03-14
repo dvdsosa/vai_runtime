@@ -12,7 +12,8 @@
         "string_view": "cpp",
         "initializer_list": "cpp",
         "iomanip": "cpp",
-        "iostream": "cpp"
+        "iostream": "cpp",
+        "iosfwd": "cpp"
     },
     "debug.inlineValues": "on"
 }
