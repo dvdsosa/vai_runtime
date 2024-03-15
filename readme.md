@@ -11,4 +11,7 @@ That's all! ready to debug in VSCode connected to the Kria connected via SSH =)
 Instructions for a normal use:
 ./resnet50_pt resnet50_DYB.xmodel image.list.txt
 
+Location of this file on the KRIA system folder:
+/home/root/Vitis-AI/examples/vai_runtime/resnet50
+
 P.S.: in this folder, the file main.cc is not used, instead, resnet50_pt.cpp has been copied from `/workspace/examples/vai_runtime/resnet50` folder of the Vitis-AI 3.0 docker image.
