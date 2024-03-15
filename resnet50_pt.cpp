@@ -32,6 +32,10 @@
 #include "vart/runner_ext.hpp"
 #include "vitis/ai/collection_helper.hpp"
 
+#include <random>
+#include <filesystem>
+namespace fs = std::filesystem;
+
 static std::vector<std::pair<int, float>> post_process(
     vart::TensorBuffer* tensor_buffer, float scale, int batch_idx);
 static std::vector<float> convert_fixpoint_to_float(vart::TensorBuffer* tensor,
@@ -107,28 +111,41 @@ static float get_output_scale(const xir::Tensor* tensor) {
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
-         << " <resnet50.xmodel> sample_image [sample_image ...] \n";
+         << " <resnet50.xmodel> <folder_path> [limit] [random]\n";
     return 0;
   }
   auto xmodel_file = std::string(argv[1]);
+  std::string folder_path = std::string(argv[2]);
+  int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 100;
+  bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
+
   // read input images
   std::vector<cv::Mat> input_images;
-  std::ifstream file(argv[2]);
-  if (!file) {
-      std::cout << "Cannot open file : " << argv[2] << std::endl;
-      exit(EXIT_FAILURE);
-  }
   std::vector<std::string> lines;
-  std::string line;
-  while (std::getline(file, line)) {
-      cv::Mat img = cv::imread(line);
-      if (img.empty()) {
-          std::cout << "Cannot load image : " << line << std::endl;
-          continue;
-      }
-      input_images.push_back(img);
-      lines.push_back(line);  // Store the line
+  std::vector<std::string> filenames;
+
+  for (const auto & entry : fs::directory_iterator(folder_path)) {
+    if (entry.path().extension() == ".jpg") {
+      filenames.push_back(entry.path().string());
+    }
   }
+
+  if (random) {
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(filenames.begin(), filenames.end(), g);
+  }
+
+  for (int i = 0; i < std::min(limit, (int)filenames.size()); i++) {
+    cv::Mat img = cv::imread(filenames[i]);
+    if (img.empty()) {
+      std::cout << "Cannot load image : " << filenames[i] << std::endl;
+      continue;
+    }
+    input_images.push_back(img);
+    lines.push_back(filenames[i]);  // Store the filename
+  }
+
   if (input_images.empty()) {
     std::cerr << "No image load success!" << std::endl;
     abort();
