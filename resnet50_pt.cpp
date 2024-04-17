@@ -183,6 +183,10 @@ int main(int argc, char* argv[]) {
   auto height = input_tensor->get_shape().at(1); // 224 for resnet50
   auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
+  // Initialize total time and image count
+  auto total_time = std::chrono::duration<double>(0);
+  int total_images = 0;
+
   // loop for running input images
   for (auto i = 0; i < input_images.size(); i += batch) {
     auto start = std::chrono::high_resolution_clock::now();
@@ -218,21 +222,30 @@ int main(int argc, char* argv[]) {
                                    output->get_tensor()->get_shape()[0]);
     }
 
-    std::cout << "Batch size: " << run_batch << "\n";
+    // std::cout << "Batch size: " << run_batch << "\n";
 
     // postprocessing
     for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
       std::cout << "Image name: " << lines[i + batch_idx] << "\n";
       auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
       // print the result
-      print_topk(topk);
+      //print_topk(topk);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end-start;
-    double fps = 1.0 / diff.count();
-    std::cout << "FPS: " << fps << std::endl << std::endl;
+
+    // Calculate last image FPS
+    //double fps = 1.0 / diff.count();
+    //std::cout << "FPS: " << fps << std::endl << std::endl;
+
+    total_time += diff;
+    total_images += run_batch;
   }
+
+  // Calculate average FPS
+  double avg_fps = total_images / total_time.count();
+  std::cout << "Average FPS: " << avg_fps << std::endl;
 
   return 0;
 }
