@@ -9,7 +9,8 @@ Second, set the debugger path in launch.json
 That's all! ready to debug in VSCode connected to the Kria connected via SSH =)
 
 Instructions for a normal use:
-./resnet50_pt resnet50_DYB.xmodel image.list.txt
+./resnet50_by_list resnet50_defaultDPU.xmodel image.list.txt
+./resnet50_by_path resnet50_defaultDPU.xmodel DYB_val
 
 Location of this file on the KRIA system folder:
 /home/root/Vitis-AI/examples/vai_runtime/resnet50
