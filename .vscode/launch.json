@@ -22,6 +22,16 @@
                 }
             ],
             "targetArchitecture": "arm"
+        },
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": ["1", "resnet50_DYB.xmodel"],
+            "cwd": "${workspaceFolder}/python",
+            "sudo":  true
         }
     ]
 }

@@ -32,8 +32,11 @@
 #include "vart/runner_ext.hpp"
 #include "vitis/ai/collection_helper.hpp"
 
+#include <vector>
 #include <random>
 #include <filesystem>
+std::vector<int> inferred_classes;
+std::vector<int> ground_truth_classes;
 namespace fs = std::filesystem;
 
 static std::vector<std::pair<int, float>> post_process(
@@ -226,10 +229,20 @@ int main(int argc, char* argv[]) {
 
     // postprocessing
     for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-      std::cout << "Image name: " << lines[i + batch_idx] << "\n";
+      std::string imageName = lines[i + batch_idx];
+      // Extract the filename from the path
+      std::string filename = imageName.substr(imageName.find_last_of("/\\") + 1);
+      // Extract the leading digits before the underscore
+      std::string classStr = filename.substr(0, filename.find("_"));
+      // Convert the string to an integer
+      int classInt = std::stoi(classStr);
+      // Append it to the ground_truth_classes vector
+      ground_truth_classes.push_back(classInt);
+      //std::cout << "Image name: " << imageName << "\n";
+
       auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
       // print the result
-      //print_topk(topk);
+      print_topk(topk);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -247,6 +260,46 @@ int main(int argc, char* argv[]) {
   double avg_fps = total_images / total_time.count();
   std::cout << "Average FPS: " << avg_fps << std::endl;
 
+/* PREVIEW OF inferred AND ground truth VECTORS
+  // Print inferred_classes vector
+  std::cout << "inferred_classes: ";
+  for(int i = 0; i < inferred_classes.size(); i++) {
+      std::cout << inferred_classes[i] << " ";
+  }
+  std::cout << std::endl;
+
+  // Print ground_truth_classes vector
+  std::cout << "ground_truth_classes: ";
+  for(int i = 0; i < ground_truth_classes.size(); i++) {
+      std::cout << ground_truth_classes[i] << " ";
+  }
+  std::cout << std::endl;
+  */
+
+  // Calculate precision
+  int true_positives = 0;
+  int false_positives = 0;
+  int false_negatives = 0;
+
+  for (int i = 0; i < ground_truth_classes.size(); i++) {
+      if (ground_truth_classes[i] == inferred_classes[i]) {  // True Positive
+          true_positives += 1;
+      } else if (std::find(ground_truth_classes.begin(), ground_truth_classes.end(), inferred_classes[i]) == ground_truth_classes.end()) {  // False Positive
+          false_positives += 1;
+      } else {  // False Negative
+          false_negatives += 1;
+      }
+  }
+
+  int total = true_positives + false_positives + false_negatives;
+  double accuracy = static_cast<double>(true_positives) / total;
+  double precision = static_cast<double>(true_positives) / (true_positives + false_positives);
+  double recall = static_cast<double>(true_positives) / (true_positives + false_negatives);
+  double f1_score = 2 * (precision * recall) / (precision + recall);
+
+  // Print the results
+  std::cout << "Accuracy: " << accuracy*100 << "%, Precision: " << precision*100 << "%, Recall: " << recall*100 << "%, F1 Score: " << f1_score*100 << "%" << std::endl;
+ 
   return 0;
 }
 
@@ -257,7 +310,7 @@ static std::vector<std::pair<int, float>> post_process(
       convert_fixpoint_to_float(tensor_buffer, scale, batch_idx);
   auto softmax_output = softmax(softmax_input);
   // print top5
-  constexpr int TOPK = 5;
+  constexpr int TOPK = 1;
   return topk(softmax_output, TOPK);
 }
 
@@ -296,11 +349,18 @@ static std::vector<std::pair<int, float>> topk(const std::vector<float>& score, 
 
 static void print_topk(const std::vector<std::pair<int, float>>& topk) {
   for (const auto& v : topk) {
-    std::cout << std::setiosflags(std::ios::left) << std::setw(11)
+    std::string lookupResult = lookup(v.first);
+
+/*     std::cout << std::setiosflags(std::ios::left) << std::setw(11)
               << "score[" + std::to_string(v.first) + "]"
               << " =  " << std::setw(12) << v.second
               << " text: " << lookup(v.first) << std::resetiosflags(std::ios::left)
-              << std::endl;
+              << std::endl; */
+
+    // Extract the leading digits before the underscore
+    std::string classStr = lookupResult.substr(0, lookupResult.find("_"));
+    // Convert the string to an integer and add it to the inferred_classes vector
+    inferred_classes.push_back(std::stoi(classStr));
   }
   //commented so FPS: xx.xxxx data appears just below last line of accuracies.
   //std::cout << std::endl;
