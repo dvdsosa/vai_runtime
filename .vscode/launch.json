@@ -6,7 +6,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/resnet50_pt",
-            "args": ["resnet50_DYB.xmodel", "image.list.txt"],
+            "args": ["resnet50_DYB.xmodel", "../test01"],
             "_args": ["ResNet50_int_DYB.xmodel", "bicho1.jpg"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -29,9 +29,9 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["1", "resnet50_DYB.xmodel"],
+            "args": ["1", "../resnet50_DYB.xmodel"],
             "cwd": "${workspaceFolder}/python",
-            "sudo":  true
+            "sudo":  false
         }
     ]
 }

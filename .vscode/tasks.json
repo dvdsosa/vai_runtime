@@ -8,7 +8,7 @@
                 "-fdiagnostics-color=always",
                 "-g",
                 "-std=c++17",
-                "-O2",
+                "-Ofast",
                 "-I.",
                 "-I/usr/include/opencv4",
                 "-o",

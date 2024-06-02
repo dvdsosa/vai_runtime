@@ -27,6 +27,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <xir/graph/graph.hpp>
+#include <typeinfo>
 
 #include "vart/runner.hpp"
 #include "vart/runner_ext.hpp"
@@ -35,6 +36,7 @@
 #include <vector>
 #include <random>
 #include <filesystem>
+#include <fstream>
 std::vector<int> inferred_classes;
 std::vector<int> ground_truth_classes;
 namespace fs = std::filesystem;
@@ -64,6 +66,25 @@ static cv::Mat preprocess_image(const cv::Mat& image, cv::Size size) {
   float scale =
       smallest_side / ((image.rows > image.cols) ? image.cols : image.rows);
   cv::Mat resized_image;
+
+  // // Crear un objeto ofstream para la escritura de archivos
+  // std::ofstream file("output_cpp.txt");
+  // // Comprobar si el archivo se abrió correctamente
+  // if (!file) {
+  //   throw std::runtime_error("No se pudo abrir el archivo para escribir");
+  // }
+  // // Escribir los valores de los píxeles en el archivo
+  // for (int i = 0; i < resized_image.rows; i++) {
+  //     for (int j = 0; j < resized_image.cols; j++) {
+  //         cv::Vec3b pixel = resized_image.at<cv::Vec3b>(i, j);
+  //         for (int k = 0; k < 3; k++) {
+  //             file << static_cast<int>(pixel[k]) << "\n";
+  //         }
+  //     }
+  // }
+  // // Cerrar el archivo
+  // file.close();
+
   cv::resize(image, resized_image,
              cv::Size(image.cols * scale, image.rows * scale));
   return croppedImage(resized_image, size.height, size.width);
@@ -72,15 +93,20 @@ static cv::Mat preprocess_image(const cv::Mat& image, cv::Size size) {
 // preprocessing for resnet50
 static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
   // mean value and scale are dataset specific, we need to calculate them before running the model.
-  //float mean[3] = {103.53f, 116.28f, 123.675f}; // [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
-  //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; // [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
+  //float mean[3] = {103.53f, 116.28f, 123.675f}; [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
+  //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
   // These are the original values for DYB-PlanktonNet dataset --mean "0.0361, 0.0326, 0.0357" --std "0.0997, 0.0968, 0.0858".
+  // # Mean: tensor([0.0419, 0.0355, 0.0410]), Std: tensor([0.0959, 0.0913, 0.0771]), Total pixels: 7588451567  --> ESTE ES EL UTILIZADO
   // Below converted as stated in the first lines.
-  float mean[3] = {9.10f, 8.31f, 9.20f};
-  float scales[3] = {0.045706f, 0.040512f, 0.039334f};
+  float mean[3] = {10.455f, 9.0525f, 10.6845f};
+  float scales[3] = {0.05086340632f, 0.0429525589f, 0.04089226932f};
 
   signed char* data1 = (signed char*)data;
   int c = 0;
+  std::ofstream file("output_cpp.txt");
+  if (!file) {
+    throw std::runtime_error("No se pudo abrir el archivo para escribir");
+  }
   for (auto row = 0; row < image.rows; row++) {
     for (auto col = 0; col < image.cols; col++) {
       auto v = image.at<cv::Vec3b>(row, col);
@@ -92,6 +118,9 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
       auto nG = (G - mean[1]) * scales[1] * fix_scale;
       auto nR = (R - mean[2]) * scales[2] * fix_scale;
       nB = std::max(std::min(nB, 127.0f), -128.0f);
+
+      file << std::fixed << std::setprecision(16) << nB << "\n";
+
       nG = std::max(std::min(nG, 127.0f), -128.0f);
       nR = std::max(std::min(nR, 127.0f), -128.0f);
       data1[c++] = (int)(nR);
@@ -99,6 +128,18 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
       data1[c++] = (int)(nB);
     }
   }
+
+  file.close();
+
+
+  // std::ofstream file("output_cpp.txt");
+  // if (!file) {
+  //   throw std::runtime_error("No se pudo abrir el archivo para escribir");
+  // }
+  // for (int i = 0; i < 150528; i++) {
+  //   file << std::fixed << std::setprecision(16) << static_cast<int>(data1[i]) << "\n";
+  // }
+  // file.close();
 }
 // fix_point to scale for input tensor
 static float get_input_scale(const xir::Tensor* tensor) {
@@ -305,6 +346,24 @@ int main(int argc, char* argv[]) {
 
 static std::vector<std::pair<int, float>> post_process(
     vart::TensorBuffer* tensor_buffer, float scale, int batch_idx) {
+
+  // // Imprimir 8-bit fixed point softmax 
+  // // Obtener un puntero a los datos del tensor
+  // uint64_t data = 0u;
+  // size_t size = 0u;
+  // std::tie(data, size) = tensor_buffer->data(std::vector<int>{batch_idx, 0});
+  // signed char* data_c = (signed char*)data;
+
+  // // Imprimir los datos del tensor como valores de punto fijo de 8 bits
+  // std::cout << "[ ";
+  // for (size_t i = 0; i < size; ++i) {
+  //   std::cout << +data_c[i]; // El operador + fuerza a imprimir como número
+  //   if (i != size - 1) {
+  //     std::cout << ", ";
+  //   }
+  // }
+  // std::cout << " ]" << std::endl;
+
   // int to float & run softmax
   auto softmax_input =
       convert_fixpoint_to_float(tensor_buffer, scale, batch_idx);

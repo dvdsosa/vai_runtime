@@ -25,6 +25,11 @@ import math
 import threading
 import time
 import sys
+import re
+
+# Declarar las variables globales
+inferred_classes = []
+ground_truth_classes = []
 
 """
 Calculate softmax
@@ -32,8 +37,6 @@ data: data to be calculated
 size: data size
 return: softamx result
 """
-
-
 def CPUCalcSoftmax(data, size, scale):
     sum = 0.0
     result = [0 for i in range(size)]
@@ -44,62 +47,98 @@ def CPUCalcSoftmax(data, size, scale):
         result[i] /= sum
     return result
 
-
 def get_script_directory():
     path = os.getcwd()
     return path
-
 
 """
 Get topk results according to its probability
 datain: data result of softmax
 filePath: filePath in witch that records the infotmation of kinds
 """
+def TopK(datain, size, ground_truth_filename, data1):
 
-
-def TopK(datain, size, filePath):
+    global inferred_classes
+    global ground_truth_classes
 
     cnt = [i for i in range(size)]
     pair = zip(datain, cnt)
     pair = sorted(pair, reverse=True)
     softmax_new, cnt_new = zip(*pair)
-    fp = open(filePath, "r")
-    data1 = fp.readlines()
-    fp.close()
-    for i in range(5):
-        idx = 0
-        for line in data1:
-            if idx == cnt_new[i]:
-                print("Top[%d] %d %s" % (i, idx, (line.strip)("\n")))
-            idx = idx + 1
 
+    # Imprimir float point softmax
+    #print(', '.join(f'{i:.18f}' for i in datain))
+
+    inferred_class_id = int(data1[cnt_new[0]].strip("\n").split('_')[0])
+    ground_truth_class_id = int(re.match(r'(\d+)', ground_truth_filename).group(1))
+    # index -->  cnt_new[0]+1
+    #print("Top[%d] Inferenced --> %02d, %02d <-- Ground Truth. Queried filename %s" % (0, inferred_class_id, ground_truth_class_id, ground_truth_filename))
+
+    inferred_classes.append(inferred_class_id)
+    ground_truth_classes.append(ground_truth_class_id)
 
 """
 pre-process for resnet50 (caffe)
 """
-_B_MEAN = 104.0
-_G_MEAN = 107.0
-_R_MEAN = 123.0
+_B_MEAN = 10.455
+_G_MEAN = 9.0525
+_R_MEAN = 10.6845
 MEANS = [_B_MEAN, _G_MEAN, _R_MEAN]
-SCALES = [1.0, 1.0, 1.0]
-
+SCALES = [0.05086340632, 0.0429525589, 0.04089226932]
 
 def preprocess_one_image_fn(image_path, fix_scale, width=224, height=224):
     means = MEANS
     scales = SCALES
     image = cv2.imread(image_path)
-    image = cv2.resize(image, (width, height))
-    B, G, R = cv2.split(image)
-    B = (B - means[0]) * scales[0] * fix_scale
-    G = (G - means[1]) * scales[1] * fix_scale
-    R = (R - means[2]) * scales[2] * fix_scale
+    # Resize the image to 256 on the smallest side
+    smallest_side = 256.0
+    scale = smallest_side / min(image.shape[0], image.shape[1])
+    new_size = (int(image.shape[1]*scale), int(image.shape[0]*scale))
+    resized_image = cv2.resize(image, new_size)
+    
+    # Center crop the image
+    y, x, _ = resized_image.shape
+    startx = x//2 - (width//2)
+    starty = y//2 - (height//2)
+    crop_img = resized_image[starty:starty+height, startx:startx+width]
+
+    B, G, R = cv2.split(crop_img)
+    B = np.float32(B)
+    meansB = np.float32(means[0])
+    scalesB = np.float32(scales[0])
+    fix_scale = np.float32(fix_scale)
+    B = (B - meansB) * scalesB * fix_scale
+
+    # Aplanar el array inputData para que pueda ser impreso en un archivo de texto
+    inputData_flattened = B.flatten()
+    # Redondear los valores a 16 decimales
+    inputData_rounded = np.round(inputData_flattened, decimals=16)
+    # Abrir el archivo en modo de escritura
+    with open('output_python.txt', 'w') as f:
+        np.savetxt(f, inputData_rounded, fmt='%.16f')
+
+    G = np.float32(G)
+    meansG = np.float32(means[1])
+    scalesG = np.float32(scales[1])
+    fix_scale = np.float32(fix_scale)
+    G = (G - meansG) * scalesG * fix_scale
+
+    R = np.float32(G)
+    meansR = np.float32(means[2])
+    scalesR = np.float32(scales[2])
+    fix_scale = np.float32(fix_scale)
+    R = (R - meansR) * scalesR * fix_scale
+   
+    #B = (B - means[0]) * scales[0] * fix_scale
+    #G = (G - means[1]) * scales[1] * fix_scale
+    #R = (R - means[2]) * scales[2] * fix_scale
     image = cv2.merge([B, G, R])
     image = image.astype(np.int8)
     return image
 
 
 SCRIPT_DIR = get_script_directory()
-calib_image_dir = SCRIPT_DIR + "/../images/"
+calib_image_dir = SCRIPT_DIR + "/../../test01/"
 global threadnum
 threadnum = 0
 """
@@ -108,9 +147,7 @@ runner: dpu runner
 img: imagelist to be run
 cnt: threadnum
 """
-
-
-def runResnet50(runner: "Runner", img, cnt):
+def runResnet50(runner: "Runner", img, ground_truth_filename, cnt):
     """get tensor"""
     inputTensors = runner.get_input_tensors()
     outputTensors = runner.get_output_tensors()
@@ -121,6 +158,11 @@ def runResnet50(runner: "Runner", img, cnt):
     output_fixpos = outputTensors[0].get_attr("fix_point")
     output_scale = 1 / (2**output_fixpos)
     n_of_images = len(img)
+
+    # Read the file once outside the function
+    with open("./plankton_list.txt", "r") as fp:
+        data1 = fp.readlines()
+
     count = 0
     while count < cnt:
         runSize = input_ndim[0]
@@ -137,9 +179,9 @@ def runResnet50(runner: "Runner", img, cnt):
         """softmax&TopK calculate with batch """
         """Benchmark DPU FPS performance over Vitis AI APIs execute_async() and wait() """
         """Uncomment the following code snippet to include softmax calculation for model’s end-to-end FPS evaluation """
-        #for j in range(runSize):
-        #    softmax = CPUCalcSoftmax(outputData[0][j], pre_output_size, output_scale)
-        #    TopK(softmax, pre_output_size, "./words.txt")
+        for j in range(runSize):
+            softmax = CPUCalcSoftmax(outputData[0][j], pre_output_size, output_scale)
+            TopK(softmax, pre_output_size, ground_truth_filename[count], data1)
 
         count = count + runSize
 
@@ -147,8 +189,6 @@ def runResnet50(runner: "Runner", img, cnt):
 """
  obtain dpu subgrah
 """
-
-
 def get_child_subgraph_dpu(graph: "Graph") -> List["Subgraph"]:
     assert graph is not None, "'graph' should not be None."
     root_subgraph = graph.get_root_subgraph()
@@ -171,8 +211,7 @@ def main(argv):
     threadAll = []
     threadnum = int(argv[1])
     i = 0
-    global runTotall
-    runTotall = len(listimage)
+    runTotal = len(listimage)
     g = xir.Graph.deserialize(argv[2])
     subgraphs = get_child_subgraph_dpu(g)
     assert len(subgraphs) == 1  # only one DPU kernel
@@ -184,9 +223,12 @@ def main(argv):
     input_scale = 2**input_fixpos
     """image list to be run """
     img = []
-    for i in range(runTotall):
+    # List of integers
+    ground_truth_filename = []
+    for i in range(runTotal):
         path = os.path.join(calib_image_dir, listimage[i])
         img.append(preprocess_one_image_fn(path, input_scale))
+        ground_truth_filename.append(listimage[i])
     """
       The cnt variable is used to control the number of times a single-thread DPU runs.
       Users can modify the value according to actual needs. It is not recommended to use
@@ -196,11 +238,11 @@ def main(argv):
       2. If users provide a huge dataset, e.g. 50000 images in the directory, they can
          use the variable to control the test time, and no need to run the whole dataset.
     """
-    cnt = 360
+    cnt = 1
     """run with batch """
     time_start = time.time()
     for i in range(int(threadnum)):
-        t1 = threading.Thread(target=runResnet50, args=(all_dpu_runners[i], img, cnt))
+        t1 = threading.Thread(target=runResnet50, args=(all_dpu_runners[i], img, ground_truth_filename, cnt))
         threadAll.append(t1)
     for x in threadAll:
         x.start()
@@ -217,7 +259,26 @@ def main(argv):
         "FPS=%.2f, total frames = %.2f , time=%.6f seconds"
         % (fps, total_frames, timetotal)
     )
+    # Calcular la precisión
+    true_positives = 0
+    false_positives = 0
+    false_negatives = 0
+    for i in range(len(ground_truth_classes)):
+        if ground_truth_classes[i] == inferred_classes[i]:  # True Positive
+            true_positives += 1
+        elif inferred_classes[i] not in ground_truth_classes:  # False Positive
+            false_positives += 1
+        else:  # False Negative
+            false_negatives += 1
 
+    total = true_positives + false_positives + false_negatives
+    accuracy = true_positives / total
+    precision = true_positives / (true_positives + false_positives)
+    recall = true_positives / (true_positives + false_negatives)
+    f1_score = 2 * (precision * recall) / (precision + recall)
+
+    # Imprimir los resultados
+    print("Accuracy: %.2f%%, Precision: %.2f%%, Recall: %.2f%%, F1 Score: %.2f%%" % (accuracy*100, precision*100, recall*100, f1_score*100))
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
