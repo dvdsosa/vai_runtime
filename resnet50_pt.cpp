@@ -66,25 +66,6 @@ static cv::Mat preprocess_image(const cv::Mat& image, cv::Size size) {
   float scale =
       smallest_side / ((image.rows > image.cols) ? image.cols : image.rows);
   cv::Mat resized_image;
-
-  // // Crear un objeto ofstream para la escritura de archivos
-  // std::ofstream file("output_cpp.txt");
-  // // Comprobar si el archivo se abrió correctamente
-  // if (!file) {
-  //   throw std::runtime_error("No se pudo abrir el archivo para escribir");
-  // }
-  // // Escribir los valores de los píxeles en el archivo
-  // for (int i = 0; i < resized_image.rows; i++) {
-  //     for (int j = 0; j < resized_image.cols; j++) {
-  //         cv::Vec3b pixel = resized_image.at<cv::Vec3b>(i, j);
-  //         for (int k = 0; k < 3; k++) {
-  //             file << static_cast<int>(pixel[k]) << "\n";
-  //         }
-  //     }
-  // }
-  // // Cerrar el archivo
-  // file.close();
-
   cv::resize(image, resized_image,
              cv::Size(image.cols * scale, image.rows * scale));
   return croppedImage(resized_image, size.height, size.width);
@@ -95,7 +76,6 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
   // mean value and scale are dataset specific, we need to calculate them before running the model.
   //float mean[3] = {103.53f, 116.28f, 123.675f}; [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
   //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
-  // These are the original values for DYB-PlanktonNet dataset --mean "0.0361, 0.0326, 0.0357" --std "0.0997, 0.0968, 0.0858".
   // # Mean: tensor([0.0419, 0.0355, 0.0410]), Std: tensor([0.0959, 0.0913, 0.0771]), Total pixels: 7588451567  --> ESTE ES EL UTILIZADO
   // Below converted as stated in the first lines.
   float mean[3] = {10.455f, 9.0525f, 10.6845f};
@@ -103,10 +83,6 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
 
   signed char* data1 = (signed char*)data;
   int c = 0;
-  std::ofstream file("output_cpp.txt");
-  if (!file) {
-    throw std::runtime_error("No se pudo abrir el archivo para escribir");
-  }
   for (auto row = 0; row < image.rows; row++) {
     for (auto col = 0; col < image.cols; col++) {
       auto v = image.at<cv::Vec3b>(row, col);
@@ -118,9 +94,6 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
       auto nG = (G - mean[1]) * scales[1] * fix_scale;
       auto nR = (R - mean[2]) * scales[2] * fix_scale;
       nB = std::max(std::min(nB, 127.0f), -128.0f);
-
-      file << std::fixed << std::setprecision(16) << nB << "\n";
-
       nG = std::max(std::min(nG, 127.0f), -128.0f);
       nR = std::max(std::min(nR, 127.0f), -128.0f);
       data1[c++] = (int)(nR);
@@ -128,18 +101,6 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
       data1[c++] = (int)(nB);
     }
   }
-
-  file.close();
-
-
-  // std::ofstream file("output_cpp.txt");
-  // if (!file) {
-  //   throw std::runtime_error("No se pudo abrir el archivo para escribir");
-  // }
-  // for (int i = 0; i < 150528; i++) {
-  //   file << std::fixed << std::setprecision(16) << static_cast<int>(data1[i]) << "\n";
-  // }
-  // file.close();
 }
 // fix_point to scale for input tensor
 static float get_input_scale(const xir::Tensor* tensor) {
@@ -179,6 +140,10 @@ int main(int argc, char* argv[]) {
     std::mt19937 g(rd());
     std::shuffle(filenames.begin(), filenames.end(), g);
   }
+
+  // Initialize total time and image count
+  auto start = std::chrono::high_resolution_clock::now();
+  int total_images = 0;
 
   for (int i = 0; i < std::min(limit, (int)filenames.size()); i++) {
     cv::Mat img = cv::imread(filenames[i]);
@@ -227,14 +192,8 @@ int main(int argc, char* argv[]) {
   auto height = input_tensor->get_shape().at(1); // 224 for resnet50
   auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
-  // Initialize total time and image count
-  auto total_time = std::chrono::duration<double>(0);
-  int total_images = 0;
-
   // loop for running input images
   for (auto i = 0; i < input_images.size(); i += batch) {
-    auto start = std::chrono::high_resolution_clock::now();
-
     auto run_batch = std::min(((int)input_images.size() - i), batch);
     auto images = std::vector<cv::Mat>(run_batch);
 
@@ -286,36 +245,14 @@ int main(int argc, char* argv[]) {
       print_topk(topk);
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end-start;
-
-    // Calculate last image FPS
-    //double fps = 1.0 / diff.count();
-    //std::cout << "FPS: " << fps << std::endl << std::endl;
-
-    total_time += diff;
     total_images += run_batch;
   }
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = end-start;
 
   // Calculate average FPS
-  double avg_fps = total_images / total_time.count();
+  double avg_fps = total_images / diff.count();
   std::cout << "Average FPS: " << avg_fps << std::endl;
-
-/* PREVIEW OF inferred AND ground truth VECTORS
-  // Print inferred_classes vector
-  std::cout << "inferred_classes: ";
-  for(int i = 0; i < inferred_classes.size(); i++) {
-      std::cout << inferred_classes[i] << " ";
-  }
-  std::cout << std::endl;
-
-  // Print ground_truth_classes vector
-  std::cout << "ground_truth_classes: ";
-  for(int i = 0; i < ground_truth_classes.size(); i++) {
-      std::cout << ground_truth_classes[i] << " ";
-  }
-  std::cout << std::endl;
-  */
 
   // Calculate precision
   int true_positives = 0;
@@ -346,24 +283,6 @@ int main(int argc, char* argv[]) {
 
 static std::vector<std::pair<int, float>> post_process(
     vart::TensorBuffer* tensor_buffer, float scale, int batch_idx) {
-
-  // // Imprimir 8-bit fixed point softmax 
-  // // Obtener un puntero a los datos del tensor
-  // uint64_t data = 0u;
-  // size_t size = 0u;
-  // std::tie(data, size) = tensor_buffer->data(std::vector<int>{batch_idx, 0});
-  // signed char* data_c = (signed char*)data;
-
-  // // Imprimir los datos del tensor como valores de punto fijo de 8 bits
-  // std::cout << "[ ";
-  // for (size_t i = 0; i < size; ++i) {
-  //   std::cout << +data_c[i]; // El operador + fuerza a imprimir como número
-  //   if (i != size - 1) {
-  //     std::cout << ", ";
-  //   }
-  // }
-  // std::cout << " ]" << std::endl;
-
   // int to float & run softmax
   auto softmax_input =
       convert_fixpoint_to_float(tensor_buffer, scale, batch_idx);
@@ -409,13 +328,6 @@ static std::vector<std::pair<int, float>> topk(const std::vector<float>& score, 
 static void print_topk(const std::vector<std::pair<int, float>>& topk) {
   for (const auto& v : topk) {
     std::string lookupResult = lookup(v.first);
-
-/*     std::cout << std::setiosflags(std::ios::left) << std::setw(11)
-              << "score[" + std::to_string(v.first) + "]"
-              << " =  " << std::setw(12) << v.second
-              << " text: " << lookup(v.first) << std::resetiosflags(std::ios::left)
-              << std::endl; */
-
     // Extract the leading digits before the underscore
     std::string classStr = lookupResult.substr(0, lookupResult.find("_"));
     // Convert the string to an integer and add it to the inferred_classes vector

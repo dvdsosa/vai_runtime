@@ -66,9 +66,6 @@ def TopK(datain, size, ground_truth_filename, data1):
     pair = sorted(pair, reverse=True)
     softmax_new, cnt_new = zip(*pair)
 
-    # Imprimir float point softmax
-    #print(', '.join(f'{i:.18f}' for i in datain))
-
     inferred_class_id = int(data1[cnt_new[0]].strip("\n").split('_')[0])
     ground_truth_class_id = int(re.match(r'(\d+)', ground_truth_filename).group(1))
     # index -->  cnt_new[0]+1
@@ -102,36 +99,10 @@ def preprocess_one_image_fn(image_path, fix_scale, width=224, height=224):
     starty = y//2 - (height//2)
     crop_img = resized_image[starty:starty+height, startx:startx+width]
 
-    B, G, R = cv2.split(crop_img)
-    B = np.float32(B)
-    meansB = np.float32(means[0])
-    scalesB = np.float32(scales[0])
-    fix_scale = np.float32(fix_scale)
-    B = (B - meansB) * scalesB * fix_scale
-
-    # Aplanar el array inputData para que pueda ser impreso en un archivo de texto
-    inputData_flattened = B.flatten()
-    # Redondear los valores a 16 decimales
-    inputData_rounded = np.round(inputData_flattened, decimals=16)
-    # Abrir el archivo en modo de escritura
-    with open('output_python.txt', 'w') as f:
-        np.savetxt(f, inputData_rounded, fmt='%.16f')
-
-    G = np.float32(G)
-    meansG = np.float32(means[1])
-    scalesG = np.float32(scales[1])
-    fix_scale = np.float32(fix_scale)
-    G = (G - meansG) * scalesG * fix_scale
-
-    R = np.float32(G)
-    meansR = np.float32(means[2])
-    scalesR = np.float32(scales[2])
-    fix_scale = np.float32(fix_scale)
-    R = (R - meansR) * scalesR * fix_scale
-   
-    #B = (B - means[0]) * scales[0] * fix_scale
-    #G = (G - means[1]) * scales[1] * fix_scale
-    #R = (R - means[2]) * scales[2] * fix_scale
+    B, G, R = cv2.split(crop_img) 
+    B = (B - means[0]) * scales[0] * fix_scale
+    G = (G - means[1]) * scales[1] * fix_scale
+    R = (R - means[2]) * scales[2] * fix_scale
     image = cv2.merge([B, G, R])
     image = image.astype(np.int8)
     return image
@@ -185,7 +156,6 @@ def runResnet50(runner: "Runner", img, ground_truth_filename, cnt):
 
         count = count + runSize
 
-
 """
  obtain dpu subgrah
 """
@@ -202,7 +172,6 @@ def get_child_subgraph_dpu(graph: "Graph") -> List["Subgraph"]:
         cs for cs in child_subgraphs
         if cs.has_attr("device") and cs.get_attr("device").upper() == "DPU"
     ]
-
 
 def main(argv):
     global threadnum
@@ -221,6 +190,7 @@ def main(argv):
 
     input_fixpos = all_dpu_runners[0].get_input_tensors()[0].get_attr("fix_point")
     input_scale = 2**input_fixpos
+    time_start = time.time()
     """image list to be run """
     img = []
     # List of integers
@@ -240,7 +210,6 @@ def main(argv):
     """
     cnt = 1
     """run with batch """
-    time_start = time.time()
     for i in range(int(threadnum)):
         t1 = threading.Thread(target=runResnet50, args=(all_dpu_runners[i], img, ground_truth_filename, cnt))
         threadAll.append(t1)
