@@ -29,7 +29,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["1", "../resnet50_DYB.xmodel"],
+            "args": ["../resnet50_DYB.xmodel"],
             "cwd": "${workspaceFolder}/python",
             "sudo":  false
         }
