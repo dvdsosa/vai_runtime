@@ -141,7 +141,6 @@ public:
             batchImagePaths.push_back(imagePaths[index]);
             ++index;
         }
-
         return true;
     }
 
@@ -206,7 +205,7 @@ int main(int argc, char* argv[]) {
   std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
   int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
-  int batch_size = 2;
+  int batch_size = 1;
 
   // Get all the image paths and labels  
   std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
@@ -262,6 +261,9 @@ int main(int argc, char* argv[]) {
   bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
   int nowBatchSize = batchImages.size();
 
+  std::vector<int> executionTimes;
+
+
   // loop for running input images
   while (continueLoading && (iteration < limit)){
       // Aquí puedes procesar el lote de imágenes
@@ -273,7 +275,9 @@ int main(int argc, char* argv[]) {
           auto run_batch = dpu_batch;
           auto images = std::vector<cv::Mat>(run_batch);
 
+          // PART A - takes 4.05ms average for batch size 1
           // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
+          auto start_time = std::chrono::high_resolution_clock::now();
           uint64_t data_in = 0u;
           size_t size_in = 0u;
           for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
@@ -285,7 +289,12 @@ int main(int argc, char* argv[]) {
             CHECK_NE(size_in, 0u);
             setImageRGB(images[batch_idx], (void*)data_in, input_scale);
           }
+          // end PART A
+          auto end_time = std::chrono::high_resolution_clock::now();
+          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+          executionTimes.push_back(duration.count());
 
+          // PART B - takes 10ms average for batch size 1
           // sync data for input
           for (auto& input : input_tensor_buffers) {
             input->sync_for_write(0, input->get_tensor()->get_data_size() /
@@ -293,32 +302,45 @@ int main(int argc, char* argv[]) {
           }
           // start the dpu
           auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
-
-          // load the next batch before waiting for the DPU
-          if (i == (nowBatchSize - 1)) {
-            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
-          }
           auto status = runner->wait((int)v.first, -1);
           CHECK_EQ(status, 0) << "failed to run dpu";
-
           // sync data for output
           for (auto& output : output_tensor_buffers) {
             output->sync_for_read(0, output->get_tensor()->get_data_size() /
                                         output->get_tensor()->get_shape()[0]);
           }
-
           // postprocessing
           for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
             auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
             // print the result
             print_topk(topk, batchLabels[i]);
           }
+          // end PART B
+
+
+          // PART C - takes 14.735ms average for batch size 1, 15.057ms average for batch size 2
+          // load the next batch before waiting for the DPU
+          if (i == (nowBatchSize - 1)) {
+            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+          }
+          // end PART C
+          //std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
 
           printProgress(double(iteration) / limit);
           iteration += run_batch;
       }
       nowBatchSize = batchImages.size();
   }
+
+  // Calculate average execution time of blocks above
+  double sum = 0;
+  for (auto time : executionTimes) {
+    sum += time;
+  }
+  double averageExecutionTime = sum / executionTimes.size();
+  std::cout << "Average Execution Time: " << averageExecutionTime << " ms" << std::endl;
+
+
 
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> diff = end-start;
