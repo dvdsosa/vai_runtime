@@ -43,6 +43,9 @@
 #include <string>
 #include <random>
 #include <chrono>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 std::vector<int> inferred_classes;
 std::vector<int> ground_truth_classes;
@@ -58,6 +61,48 @@ static std::vector<std::pair<int, float>> topk(const std::vector<float>& score,
                                                int K);
 static void print_topk(const std::vector<std::pair<int, float>>& topk, int ground_truth_class);
 static const char* lookup(int index);
+
+class Image {
+public:
+    std::vector<cv::Mat> batchImages;
+    std::vector<int> batchLabels;
+    std::vector<std::string> batchImagePaths;
+};
+
+// Safe Queue for threads
+template <typename T>
+class SafeQueue {
+private:
+    std::queue<Image> queue;
+    std::mutex mutex;
+    std::condition_variable cond;
+    bool isProducerFinished = false;
+public:
+    void push(Image value) {
+        std::lock_guard<std::mutex> lock(mutex);
+        queue.push(value);
+        cond.notify_one();
+    }
+
+    Image pop() {
+        std::unique_lock<std::mutex> lock(mutex);
+        while(queue.empty() && !isProducerFinished) {
+            cond.wait(lock);
+        }
+        if(queue.empty() && isProducerFinished) {
+            return Image();  // Devuelve un Image vacío si la cola está vacía y el productor ha terminado
+        }
+        Image value = queue.front();
+        queue.pop();
+        return value;
+    }
+
+    void producerFinished() {
+        std::lock_guard<std::mutex> lock(mutex);
+        isProducerFinished = true;
+        cond.notify_all();
+    }
+};
 
 static cv::Mat croppedImage(const cv::Mat& image, int height, int width) {
   cv::Mat cropped_img;
@@ -199,173 +244,162 @@ void printProgress(double percentage) {
     std::cout.flush();
 }
 
-void lazyLoading(std::promise<bool>& prom, ImageLoader& loader, std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels, std::vector<std::string>& batchImagePaths) {
-    // Load in another thread the next image
-    bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
-    // return the bool value
-    prom.set_value(continueLoading);
+void imageProducer(SafeQueue<Image>& queue, int& limit, std::string rootFolder){
+
+    int batch_size = 1;
+    // Get all the image paths and labels  
+    std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
+    std::vector<int> labels = extractNumbersFromPaths(imagePaths);
+    // Update the value of limit if it is 0
+    if (limit == 0) {
+      limit = labels.size();
+    }
+    // Create my custom ImageLoader mimicking the one from PyTorch
+    ImageLoader loader(imagePaths, labels, batch_size, cv::Size(224, 224));
+    bool continueLoading = true;
+    int count = 0;
+
+    while(continueLoading && (count < limit)) {
+        std::vector<cv::Mat> batchImages;
+        std::vector<int> batchLabels;
+        std::vector<std::string> batchImagePaths;
+      
+      // Load in another thread the next image
+      continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+
+      Image image;
+      image.batchImages = batchImages;
+      image.batchLabels = batchLabels;
+      image.batchImagePaths = batchImagePaths;
+
+      queue.push(image);
+      count++;
+
+      printProgress(double(count) / limit);
+    }
+    queue.producerFinished();  // Avisa que tareaB ha terminado
 }
 
+// Tasks A y C (consumers)
+void imageConsumer(SafeQueue<Image>& queue, std::string xmodel_file) {
+
+    //  create dpu runner
+    auto graph = xir::Graph::deserialize(xmodel_file);
+    auto root = graph->get_root_subgraph();
+    xir::Subgraph* subgraph = nullptr;
+    for (auto c : root->children_topological_sort()) {
+      CHECK(c->has_attr("device"));
+      if (c->get_attr<std::string>("device") == "DPU") {
+        subgraph = c;
+        break;
+      }
+    }
+    auto attrs = xir::Attrs::create();
+    std::unique_ptr<vart::RunnerExt> runner =
+    vart::RunnerExt::create_runner(subgraph, attrs.get());
+
+    // get input & output tensor buffers
+    auto input_tensor_buffers = runner->get_inputs();
+    auto output_tensor_buffers = runner->get_outputs();
+    CHECK_EQ(input_tensor_buffers.size(), 1u) << "only support resnet50 model";
+    CHECK_EQ(output_tensor_buffers.size(), 1u) << "only support resnet50 model";
+
+    // get input_scale & output_scale
+    auto input_tensor = input_tensor_buffers[0]->get_tensor();
+    auto input_scale = get_input_scale(input_tensor);
+
+    auto output_tensor = output_tensor_buffers[0]->get_tensor();
+    auto output_scale = get_output_scale(output_tensor);
+
+    auto dpu_batch = input_tensor->get_shape().at(0);
+    auto height = input_tensor->get_shape().at(1); // 224 for resnet50
+    auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
+
+    while(true) {
+        Image image = queue.pop();
+
+        if(image.batchImages.empty() && image.batchLabels.empty() && image.batchImagePaths.empty()) {
+            break;  // Termina el bucle si recibe un Image vacío
+        }
+
+        // Batch Size
+        auto run_batch = dpu_batch;
+        auto images = std::vector<cv::Mat>(run_batch);
+        std::promise<bool> prom1;
+        std::future<bool> fut1 = prom1.get_future();
+        std::thread t1;
+
+        // PART A - takes 4.05ms average for batch size 1
+        // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
+        uint64_t data_in = 0u;
+        size_t size_in = 0u;
+        for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+          images[batch_idx] = preprocess_image(image.batchImages[batch_idx],
+                                              cv::Size(width, height));
+          // set the input image and preprocessing
+          std::tie(data_in, size_in) =
+              input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
+          CHECK_NE(size_in, 0u);
+          setImageRGB(images[batch_idx], (void*)data_in, input_scale);
+        }
+        // end PART A
+
+        // PART B - takes 10ms average for batch size 1
+        // sync data for input
+        for (auto& input : input_tensor_buffers) {
+          input->sync_for_write(0, input->get_tensor()->get_data_size() /
+                                      input->get_tensor()->get_shape()[0]);
+        }
+        // start the dpu
+        auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
+        // load the next batch before waiting for the DPU
+        auto status = runner->wait((int)v.first, -1);
+        CHECK_EQ(status, 0) << "failed to run dpu";
+        // sync data for output
+        for (auto& output : output_tensor_buffers) {
+          output->sync_for_read(0, output->get_tensor()->get_data_size() /
+                                      output->get_tensor()->get_shape()[0]);
+        }
+        // postprocessing
+        for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+          auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
+          // print the result
+          print_topk(topk, image.batchLabels[batch_idx]);
+        }
+        // end PART B
+
+    }
+}
+
+
 int main(int argc, char* argv[]) {
+
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
          << " <resnet50.xmodel> <folder_path> [limit] [random]\n";
     return 0;
   }
+  SafeQueue<Image> queue;
+
   auto xmodel_file = std::string(argv[1]);
   std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
   int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
-  int batch_size = 1;
-
-  // Get all the image paths and labels  
-  std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
-  std::vector<int> labels = extractNumbersFromPaths(imagePaths);
 
   // Initialize total time and image count
   auto start = std::chrono::high_resolution_clock::now();
 
-  // Create my custom ImageLoader mimicking the one from PyTorch
-  ImageLoader loader(imagePaths, labels, batch_size, cv::Size(224, 224));
-  // Update the value of limit if it is 0
-  if (limit == 0) {
-    limit = labels.size();
-  }
+  std::thread t1(imageProducer, std::ref(queue), std::ref(limit), rootFolder);
+  std::thread t2(imageConsumer, std::ref(queue), std::ref(xmodel_file));
 
-  //  create dpu runner
-  auto graph = xir::Graph::deserialize(xmodel_file);
-  auto root = graph->get_root_subgraph();
-  xir::Subgraph* subgraph = nullptr;
-  for (auto c : root->children_topological_sort()) {
-    CHECK(c->has_attr("device"));
-    if (c->get_attr<std::string>("device") == "DPU") {
-      subgraph = c;
-      break;
-    }
-  }
-  auto attrs = xir::Attrs::create();
-  std::unique_ptr<vart::RunnerExt> runner =
-      vart::RunnerExt::create_runner(subgraph, attrs.get());
-
-  // get input & output tensor buffers
-  auto input_tensor_buffers = runner->get_inputs();
-  auto output_tensor_buffers = runner->get_outputs();
-  CHECK_EQ(input_tensor_buffers.size(), 1u) << "only support resnet50 model";
-  CHECK_EQ(output_tensor_buffers.size(), 1u) << "only support resnet50 model";
-
-  // get input_scale & output_scale
-  auto input_tensor = input_tensor_buffers[0]->get_tensor();
-  auto input_scale = get_input_scale(input_tensor);
-
-  auto output_tensor = output_tensor_buffers[0]->get_tensor();
-  auto output_scale = get_output_scale(output_tensor);
-
-  auto dpu_batch = input_tensor->get_shape().at(0);
-  auto height = input_tensor->get_shape().at(1); // 224 for resnet50
-  auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
-
-  // Iterar sobre los lotes de imágenes
-  std::vector<cv::Mat> batchImages;
-  std::vector<int> batchLabels;
-  std::vector<std::string> batchImagePaths;
-  int iteration = 0;
-  bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
-  int nowBatchSize = batchImages.size();
-
-  std::vector<int> executionTimes;
-
-
-  // loop for running input images
-  while (continueLoading && (iteration < limit)){
-      // Aquí puedes procesar el lote de imágenes
-      for (size_t i = (nowBatchSize - batch_size); i < nowBatchSize; ++i) {
-          //std::cout << "EL INDICE VALE: " << i << std::endl;
-          //std::cout << "Filename --> " << batchImagePaths[i] << std::endl;
-
-          auto start_time = std::chrono::high_resolution_clock::now();
-
-          // Batch Size
-          auto run_batch = dpu_batch;
-          auto images = std::vector<cv::Mat>(run_batch);
-          std::promise<bool> prom1;
-          std::future<bool> fut1 = prom1.get_future();
-          std::thread t1;
-
-          // PART A - takes 4.05ms average for batch size 1
-          // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
-          uint64_t data_in = 0u;
-          size_t size_in = 0u;
-          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-            images[batch_idx] = preprocess_image(batchImages[i + batch_idx],
-                                                cv::Size(width, height));
-            // set the input image and preprocessing
-            std::tie(data_in, size_in) =
-                input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
-            CHECK_NE(size_in, 0u);
-            setImageRGB(images[batch_idx], (void*)data_in, input_scale);
-          }
-          // end PART A
-
-          // launch thread for PARTC
-          // PART C - takes 14.735ms average for batch size 1, 15.057ms average for batch size 2
-          if (i == (nowBatchSize - 1)) {
-            t1 = std::thread(lazyLoading, std::ref(prom1), std::ref(loader), std::ref(batchImages), std::ref(batchLabels), std::ref(batchImagePaths));
-//            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
-          }
-          // end PART C
-
-          // PART B - takes 10ms average for batch size 1
-          // sync data for input
-          for (auto& input : input_tensor_buffers) {
-            input->sync_for_write(0, input->get_tensor()->get_data_size() /
-                                        input->get_tensor()->get_shape()[0]);
-          }
-          // start the dpu
-          auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
-          // load the next batch before waiting for the DPU
-          auto status = runner->wait((int)v.first, -1);
-          CHECK_EQ(status, 0) << "failed to run dpu";
-          // sync data for output
-          for (auto& output : output_tensor_buffers) {
-            output->sync_for_read(0, output->get_tensor()->get_data_size() /
-                                        output->get_tensor()->get_shape()[0]);
-          }
-          // postprocessing
-          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-            auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
-            // print the result
-            print_topk(topk, batchLabels[i]);
-          }
-          // end PART B
-
-          printProgress(double(iteration) / limit);
-          iteration += run_batch;
-
-          if (t1.joinable()) {
-            fut1.wait();
-            t1.join();
-            continueLoading = fut1.get();
-          }
-          auto end_time = std::chrono::high_resolution_clock::now();
-          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-          executionTimes.push_back(duration.count());
-      }
-      nowBatchSize = batchImages.size();
-  }
-
-  // Calculate average execution time of blocks above
-  double sum = 0;
-  for (auto time : executionTimes) {
-    sum += time;
-  }
-  double averageExecutionTime = sum / executionTimes.size();
-  std::cout << std::endl << "Average Execution Time: " << averageExecutionTime << " ms" << std::endl;
+  t1.join();
+  t2.join();
 
   // Calculate average FPS
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> diff = end-start;
-  std::cout << std::endl << "Total number of processed images: " << iteration << std::endl;
-  double avg_fps = iteration / diff.count();
+  std::cout << std::endl << "Total number of processed images: " << limit << std::endl;
+  double avg_fps = limit / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
   // Calculate precision
