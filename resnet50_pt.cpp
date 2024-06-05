@@ -76,21 +76,15 @@ static cv::Mat preprocess_image(const cv::Mat& image, cv::Size size) {
 
 // preprocessing for resnet50
 static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
-  // mean value and scale are dataset specific, we need to calculate them before running the model.
-  //float mean[3] = {103.53f, 116.28f, 123.675f}; [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
-  //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
-  // # Mean: tensor([0.0419, 0.0355, 0.0410]), Std: tensor([0.0959, 0.0913, 0.0771]), Total pixels: 7588451567  --> ESTE ES EL UTILIZADO
+/*   mean value and scale are dataset specific, we need to calculate them before running the model.
+  float mean[3] = {B, G, R} values of ImageNet dataset multiplied by 255 (original values are mean=[0.485, 0.456, 0.406] in RGB order).
+  float mean[3] = {103.53f, 116.28f, 123.675f};
+  float scales[3] = {stdB, stdG, stdR} values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values are std=[0.229, 0.224, 0.225] in RGB order).
+  float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; */
   
-  // 90.12% con old.xmodel
-  float mean[3] = {9.1035f, 8.313f, 9.2055f};
-  float scales[3] = {0.045f, 0.04f, 0.04f};
-
-  // Below converted B, G, R
-  //float mean[3] = {12.52f, 11.22f, 12.852f};
-  //float scales[3] = {0.044f, 0.038f, 0.037f};
-
-  //float mean[3] = {10.455f, 9.0525f, 10.6845f};
-  //float scales[3] = {0.05086340632f, 0.0429525589f, 0.04089226932f};
+  // # Mean: tensor([0.0419, 0.0355, 0.0410]), Std: tensor([0.0959, 0.0913, 0.0771]), Total pixels: 7588451567  --> ESTE ES EL UTILIZADO en ORDEN RGB
+  float mean[3] = {10.455f, 9.0525f, 10.6845f};
+  float scales[3] = {0.05086340632f, 0.0429525589f, 0.04089226932f};
 
   signed char* data1 = (signed char*)data;
   int c = 0;
@@ -210,6 +204,7 @@ int main(int argc, char* argv[]) {
   std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
   int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
+  int batch_size = 1;
 
   // Get all the image paths and labels  
   std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
@@ -219,7 +214,7 @@ int main(int argc, char* argv[]) {
   auto start = std::chrono::high_resolution_clock::now();
 
   // Create my custom ImageLoader mimicking the one from PyTorch
-  ImageLoader loader(imagePaths, labels, 1, cv::Size(224, 224));
+  ImageLoader loader(imagePaths, labels, batch_size, cv::Size(224, 224));
   // Update the value of limit if it is 0
   if (limit == 0) {
     limit = labels.size();
@@ -253,7 +248,7 @@ int main(int argc, char* argv[]) {
   auto output_tensor = output_tensor_buffers[0]->get_tensor();
   auto output_scale = get_output_scale(output_tensor);
 
-  auto batch = input_tensor->get_shape().at(0);
+  auto dpu_batch = input_tensor->get_shape().at(0);
   auto height = input_tensor->get_shape().at(1); // 224 for resnet50
   auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
@@ -264,11 +259,10 @@ int main(int argc, char* argv[]) {
   // loop for running input images
   while (loader.nextBatch(batchImages, batchLabels) && (iteration < limit)){
       // Aquí puedes procesar el lote de imágenes
-      for (size_t i = 0; i < batchImages.size(); ++i) {
-          //std::cout << batchLabels[i] << std::endl;
-          
+      for (size_t i = (batchImages.size() - batch_size); i < batchImages.size(); ++i) {
+
           // Batch Size
-          auto run_batch = batch;
+          auto run_batch = dpu_batch;
           auto images = std::vector<cv::Mat>(run_batch);
 
           // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
@@ -315,6 +309,9 @@ int main(int argc, char* argv[]) {
   std::chrono::duration<double> diff = end-start;
 
   // Calculate average FPS
+  std::cout << std::endl << std::endl << "Total number of images: " << iteration << std::endl;
+  std::cout << "Time elapsed: " << diff.count() << " seconds" << std::endl;
+
   double avg_fps = iteration / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 

@@ -13,11 +13,12 @@ public:
     ImageLoader(const std::vector<std::string>& imagePaths, const std::vector<int>& labels, int batchSize, cv::Size imgSize)
         : imagePaths(imagePaths), labels(labels), batchSize(batchSize), imgSize(imgSize), index(0) {}
 
-    bool nextBatch(std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels) {
+    bool nextBatch(std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels, std::vector<std::string>& batchImagePaths) {
         if (index >= imagePaths.size()) {
             return false;
         }
 
+        //std::cout << "Current index class ImageLoader: " << index << std::endl;
         for (int i = 0; i < batchSize; ++i) {
             if (index >= imagePaths.size()) {
                 break;
@@ -27,6 +28,7 @@ public:
             cv::resize(img, img, imgSize);
             batchImages.push_back(img);
             batchLabels.push_back(labels[index]);
+            batchImagePaths.push_back(imagePaths[index]);
             ++index;
         }
 
@@ -71,7 +73,6 @@ std::vector<std::string> getAllImagePaths(const std::string& rootFolder, const s
     return imagePaths;
 }
 
-
 std::vector<int> extractNumbersFromPaths(const std::vector<std::string>& imagePaths) {
     std::vector<int> numbers;
     for (const auto& path : imagePaths) {
@@ -104,19 +105,23 @@ int main(int argc, char* argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Time elapsed: " << duration.count() << " ms" << std::endl;
     
-    // Crear el ImageLoader
-    ImageLoader loader(imagePaths, labels, 2, cv::Size(224, 224));
+    // Create the ImageLoader
+    ImageLoader loader(imagePaths, labels, 1, cv::Size(224, 224));
 
-    // Iterar sobre los lotes de imágenes
+    // Iterate over the batches of images
     std::vector<cv::Mat> batchImages;
     std::vector<int> batchLabels;
+    std::vector<std::string> batchImagePaths;
     int limit = 10; // Set the limit here
     int iteration = 0;
-    while (loader.nextBatch(batchImages, batchLabels) && (limit == 0 || iteration < limit)){
+
+    while (loader.nextBatch(batchImages, batchLabels, batchImagePaths) && (iteration < limit)){
         start = std::chrono::high_resolution_clock::now();
-        // Aquí puedes procesar el lote de imágenes
-        for (size_t i = 0; i < batchImages.size(); ++i) {
-            std::cout << batchLabels[i] << std::endl;
+        
+        // Here you can process the batch of images
+        for (size_t i = (batchImages.size() - 1); i < batchImages.size(); ++i) {
+            std::cout <<  "VALOR DEL INDICE i: " << i << "<-- DEL BUCLE" << std::endl;
+            std::cout << batchImagePaths[i] << std::endl;
             //std::cout << "Batch size: " << batchImages.size() << std::endl;
         }
         end = std::chrono::high_resolution_clock::now();
