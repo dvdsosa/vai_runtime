@@ -123,11 +123,12 @@ public:
     ImageLoader(const std::vector<std::string>& imagePaths, const std::vector<int>& labels, int batchSize, cv::Size imgSize)
         : imagePaths(imagePaths), labels(labels), batchSize(batchSize), imgSize(imgSize), index(0) {}
 
-    bool nextBatch(std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels) {
+    bool nextBatch(std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels, std::vector<std::string>& batchImagePaths) {
         if (index >= imagePaths.size()) {
             return false;
         }
 
+        //std::cout << "Current index class ImageLoader: " << index << std::endl;
         for (int i = 0; i < batchSize; ++i) {
             if (index >= imagePaths.size()) {
                 break;
@@ -137,6 +138,7 @@ public:
             cv::resize(img, img, imgSize);
             batchImages.push_back(img);
             batchLabels.push_back(labels[index]);
+            batchImagePaths.push_back(imagePaths[index]);
             ++index;
         }
 
@@ -255,19 +257,21 @@ int main(int argc, char* argv[]) {
   // Iterar sobre los lotes de imágenes
   std::vector<cv::Mat> batchImages;
   std::vector<int> batchLabels;
+  std::vector<std::string> batchImagePaths;
   int iteration = 0;
-  bool continueLoading = loader.nextBatch(batchImages, batchLabels);
+  bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
   int nowBatchSize = batchImages.size();
 
   // loop for running input images
   while (continueLoading && (iteration < limit)){
       // Aquí puedes procesar el lote de imágenes
       for (size_t i = (nowBatchSize - batch_size); i < nowBatchSize; ++i) {
-          std::cout << "EL INDICE VALE: " << i << std::endl;
+          //std::cout << "EL INDICE VALE: " << i << std::endl;
+          //std::cout << "Filename --> " << batchImagePaths[i] << std::endl;
 
           // Batch Size
           auto run_batch = dpu_batch;
-/*           auto images = std::vector<cv::Mat>(run_batch);
+          auto images = std::vector<cv::Mat>(run_batch);
 
           // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
           uint64_t data_in = 0u;
@@ -289,8 +293,14 @@ int main(int argc, char* argv[]) {
           }
           // start the dpu
           auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
+
+          // load the next batch before waiting for the DPU
+          if (i == (nowBatchSize - 1)) {
+            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+          }
           auto status = runner->wait((int)v.first, -1);
           CHECK_EQ(status, 0) << "failed to run dpu";
+
           // sync data for output
           for (auto& output : output_tensor_buffers) {
             output->sync_for_read(0, output->get_tensor()->get_data_size() /
@@ -302,10 +312,6 @@ int main(int argc, char* argv[]) {
             auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
             // print the result
             print_topk(topk, batchLabels[i]);
-          } */
-
-          if (i == (nowBatchSize - 1)) {
-            continueLoading = loader.nextBatch(batchImages, batchLabels);
           }
 
           printProgress(double(iteration) / limit);
@@ -324,7 +330,7 @@ int main(int argc, char* argv[]) {
   double avg_fps = iteration / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
-/*   // Calculate precision
+  // Calculate precision
   int true_positives = 0;
   int false_positives = 0;
   int false_negatives = 0;
@@ -347,7 +353,7 @@ int main(int argc, char* argv[]) {
 
   // Print the results
   std::cout << "Accuracy: " << accuracy*100 << "%, Precision: " << precision*100 << "%, Recall: " << recall*100 << "%, F1 Score: " << f1_score*100 << "%" << std::endl;
-  */
+ 
   return 0;
 }
 
