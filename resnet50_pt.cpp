@@ -186,6 +186,20 @@ std::vector<int> extractNumbersFromPaths(const std::vector<std::string>& imagePa
     return numbers;
 }
 
+void printProgress(double percentage) {
+    const int barWidth = 70;
+
+    std::cout << "[";
+    int pos = barWidth * percentage;
+    for (int i = 0; i < barWidth; ++i) {
+        if (i < pos) std::cout << "=";
+        else if (i == pos) std::cout << ">";
+        else std::cout << " ";
+    }
+    std::cout << "] " << int(percentage * 100.0) << " %\r";
+    std::cout.flush();
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
@@ -291,6 +305,8 @@ int main(int argc, char* argv[]) {
             // print the result
             print_topk(topk, batchLabels[i]);
           }
+
+          printProgress(double(iteration) / limit);
           iteration += run_batch;
       }
   }
@@ -300,7 +316,7 @@ int main(int argc, char* argv[]) {
 
   // Calculate average FPS
   double avg_fps = iteration / diff.count();
-  std::cout << "Average FPS: " << avg_fps << std::endl;
+  std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
   // Calculate precision
   int true_positives = 0;
