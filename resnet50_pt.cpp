@@ -20,12 +20,14 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <numeric>
-#include <chrono>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 #include <xir/graph/graph.hpp>
 #include <typeinfo>
 
@@ -34,9 +36,10 @@
 #include "vitis/ai/collection_helper.hpp"
 
 #include <vector>
+#include <string>
 #include <random>
-#include <filesystem>
-#include <fstream>
+#include <chrono>
+
 std::vector<int> inferred_classes;
 std::vector<int> ground_truth_classes;
 namespace fs = std::filesystem;
@@ -49,7 +52,7 @@ static std::vector<float> convert_fixpoint_to_float(vart::TensorBuffer* tensor,
 static std::vector<float> softmax(const std::vector<float>& input);
 static std::vector<std::pair<int, float>> topk(const std::vector<float>& score,
                                                int K);
-static void print_topk(const std::vector<std::pair<int, float>>& topk);
+static void print_topk(const std::vector<std::pair<int, float>>& topk, int ground_truth_class);
 static const char* lookup(int index);
 
 static cv::Mat croppedImage(const cv::Mat& image, int height, int width) {
@@ -77,9 +80,17 @@ static void setImageRGB(const cv::Mat& image, void* data, float fix_scale) {
   //float mean[3] = {103.53f, 116.28f, 123.675f}; [B, G, R] mean values of ImageNet dataset multiplied by 255 (original values mean=[0.485, 0.456, 0.406] in RGB order).
   //float scales[3] = {0.017429f, 0.017507f, 0.01712475f}; [stdB, stdG, stdR] std values of ImageNet dataset calculated as stdB = 1/255/originalstdChannel (original values std=[0.229, 0.224, 0.225] in RGB order).
   // # Mean: tensor([0.0419, 0.0355, 0.0410]), Std: tensor([0.0959, 0.0913, 0.0771]), Total pixels: 7588451567  --> ESTE ES EL UTILIZADO
-  // Below converted as stated in the first lines.
-  float mean[3] = {10.455f, 9.0525f, 10.6845f};
-  float scales[3] = {0.05086340632f, 0.0429525589f, 0.04089226932f};
+  
+  // 90.12% con old.xmodel
+  float mean[3] = {9.1035f, 8.313f, 9.2055f};
+  float scales[3] = {0.045f, 0.04f, 0.04f};
+
+  // Below converted B, G, R
+  //float mean[3] = {12.52f, 11.22f, 12.852f};
+  //float scales[3] = {0.044f, 0.038f, 0.037f};
+
+  //float mean[3] = {10.455f, 9.0525f, 10.6845f};
+  //float scales[3] = {0.05086340632f, 0.0429525589f, 0.04089226932f};
 
   signed char* data1 = (signed char*)data;
   int c = 0;
@@ -113,6 +124,68 @@ static float get_output_scale(const xir::Tensor* tensor) {
   return std::exp2f(-1.0f * (float)fixpos);
 }
 
+class ImageLoader {
+public:
+    ImageLoader(const std::vector<std::string>& imagePaths, const std::vector<int>& labels, int batchSize, cv::Size imgSize)
+        : imagePaths(imagePaths), labels(labels), batchSize(batchSize), imgSize(imgSize), index(0) {}
+
+    bool nextBatch(std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels) {
+        if (index >= imagePaths.size()) {
+            return false;
+        }
+
+        for (int i = 0; i < batchSize; ++i) {
+            if (index >= imagePaths.size()) {
+                break;
+            }
+
+            cv::Mat img = cv::imread(imagePaths[index]);
+            cv::resize(img, img, imgSize);
+            batchImages.push_back(img);
+            batchLabels.push_back(labels[index]);
+            ++index;
+        }
+
+        return true;
+    }
+
+private:
+    std::vector<std::string> imagePaths;
+    std::vector<int> labels;
+    int batchSize;
+    cv::Size imgSize;
+    size_t index;
+};
+
+std::vector<std::string> getAllImagePaths(const std::string& rootFolder) {
+    std::vector<std::string> imagePaths;
+    std::filesystem::path rootPath(rootFolder);
+
+    if (!std::filesystem::exists(rootPath) || !std::filesystem::is_directory(rootPath)) {
+        std::cout << "Invalid root folder" << std::endl;
+        return imagePaths;
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".jpg") {
+            imagePaths.push_back(entry.path().string());
+        }
+    }
+
+    return imagePaths;
+}
+
+std::vector<int> extractNumbersFromPaths(const std::vector<std::string>& imagePaths) {
+    std::vector<int> numbers;
+    for (const auto& path : imagePaths) {
+        std::string parentDirName = std::filesystem::path(path).parent_path().filename().string();
+        std::string numberStr = parentDirName.substr(0, parentDirName.find('_'));
+        int number = std::stoi(numberStr);
+        numbers.push_back(number);
+    }
+    return numbers;
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
@@ -120,44 +193,22 @@ int main(int argc, char* argv[]) {
     return 0;
   }
   auto xmodel_file = std::string(argv[1]);
-  std::string folder_path = std::string(argv[2]);
-  int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 100;
+  std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
+  int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
 
-  // read input images
-  std::vector<cv::Mat> input_images;
-  std::vector<std::string> lines;
-  std::vector<std::string> filenames;
-
-  for (const auto & entry : fs::directory_iterator(folder_path)) {
-    if (entry.path().extension() == ".jpg") {
-      filenames.push_back(entry.path().string());
-    }
-  }
-
-  if (random) {
-    std::random_device rd;
-    std::mt19937 g(rd());
-    std::shuffle(filenames.begin(), filenames.end(), g);
-  }
+  // Get all the image paths and labels  
+  std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
+  std::vector<int> labels = extractNumbersFromPaths(imagePaths);
 
   // Initialize total time and image count
   auto start = std::chrono::high_resolution_clock::now();
-  int total_images = 0;
 
-  for (int i = 0; i < std::min(limit, (int)filenames.size()); i++) {
-    cv::Mat img = cv::imread(filenames[i]);
-    if (img.empty()) {
-      std::cout << "Cannot load image : " << filenames[i] << std::endl;
-      continue;
-    }
-    input_images.push_back(img);
-    lines.push_back(filenames[i]);  // Store the filename
-  }
-
-  if (input_images.empty()) {
-    std::cerr << "No image load success!" << std::endl;
-    abort();
+  // Create my custom ImageLoader mimicking the one from PyTorch
+  ImageLoader loader(imagePaths, labels, 1, cv::Size(224, 224));
+  // Update the value of limit if it is 0
+  if (limit == 0) {
+    limit = labels.size();
   }
 
   //  create dpu runner
@@ -192,66 +243,63 @@ int main(int argc, char* argv[]) {
   auto height = input_tensor->get_shape().at(1); // 224 for resnet50
   auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
+  // Iterar sobre los lotes de imágenes
+  std::vector<cv::Mat> batchImages;
+  std::vector<int> batchLabels;
+  int iteration = 0;
   // loop for running input images
-  for (auto i = 0; i < input_images.size(); i += batch) {
-    auto run_batch = std::min(((int)input_images.size() - i), batch);
-    auto images = std::vector<cv::Mat>(run_batch);
+  while (loader.nextBatch(batchImages, batchLabels) && (iteration < limit)){
+      // Aquí puedes procesar el lote de imágenes
+      for (size_t i = 0; i < batchImages.size(); ++i) {
+          //std::cout << batchLabels[i] << std::endl;
+          
+          // Batch Size
+          auto run_batch = batch;
+          auto images = std::vector<cv::Mat>(run_batch);
 
-    // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
-    uint64_t data_in = 0u;
-    size_t size_in = 0u;
-    for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-      images[batch_idx] = preprocess_image(input_images[i + batch_idx],
-                                           cv::Size(width, height));
-      // set the input image and preprocessing
-      std::tie(data_in, size_in) =
-          input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
-      CHECK_NE(size_in, 0u);
-      setImageRGB(images[batch_idx], (void*)data_in, input_scale);
-    }
+          // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
+          uint64_t data_in = 0u;
+          size_t size_in = 0u;
+          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+            images[batch_idx] = preprocess_image(batchImages[i + batch_idx],
+                                                cv::Size(width, height));
+            // set the input image and preprocessing
+            std::tie(data_in, size_in) =
+                input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
+            CHECK_NE(size_in, 0u);
+            setImageRGB(images[batch_idx], (void*)data_in, input_scale);
+          }
 
-    // sync data for input
-    for (auto& input : input_tensor_buffers) {
-      input->sync_for_write(0, input->get_tensor()->get_data_size() /
-                                   input->get_tensor()->get_shape()[0]);
-    }
-    // start the dpu
-    auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
-    auto status = runner->wait((int)v.first, -1);
-    CHECK_EQ(status, 0) << "failed to run dpu";
-    // sync data for output
-    for (auto& output : output_tensor_buffers) {
-      output->sync_for_read(0, output->get_tensor()->get_data_size() /
-                                   output->get_tensor()->get_shape()[0]);
-    }
+          // sync data for input
+          for (auto& input : input_tensor_buffers) {
+            input->sync_for_write(0, input->get_tensor()->get_data_size() /
+                                        input->get_tensor()->get_shape()[0]);
+          }
+          // start the dpu
+          auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
+          auto status = runner->wait((int)v.first, -1);
+          CHECK_EQ(status, 0) << "failed to run dpu";
+          // sync data for output
+          for (auto& output : output_tensor_buffers) {
+            output->sync_for_read(0, output->get_tensor()->get_data_size() /
+                                        output->get_tensor()->get_shape()[0]);
+          }
 
-    // std::cout << "Batch size: " << run_batch << "\n";
-
-    // postprocessing
-    for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-      std::string imageName = lines[i + batch_idx];
-      // Extract the filename from the path
-      std::string filename = imageName.substr(imageName.find_last_of("/\\") + 1);
-      // Extract the leading digits before the underscore
-      std::string classStr = filename.substr(0, filename.find("_"));
-      // Convert the string to an integer
-      int classInt = std::stoi(classStr);
-      // Append it to the ground_truth_classes vector
-      ground_truth_classes.push_back(classInt);
-      //std::cout << "Image name: " << imageName << "\n";
-
-      auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
-      // print the result
-      print_topk(topk);
-    }
-
-    total_images += run_batch;
+          // postprocessing
+          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+            auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
+            // print the result
+            print_topk(topk, batchLabels[i]);
+          }
+          iteration += run_batch;
+      }
   }
+
   auto end = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> diff = end-start;
 
   // Calculate average FPS
-  double avg_fps = total_images / diff.count();
+  double avg_fps = iteration / diff.count();
   std::cout << "Average FPS: " << avg_fps << std::endl;
 
   // Calculate precision
@@ -325,16 +373,20 @@ static std::vector<std::pair<int, float>> topk(const std::vector<float>& score, 
   return ret;
 }
 
-static void print_topk(const std::vector<std::pair<int, float>>& topk) {
-  for (const auto& v : topk) {
-    std::string lookupResult = lookup(v.first);
-    // Extract the leading digits before the underscore
-    std::string classStr = lookupResult.substr(0, lookupResult.find("_"));
-    // Convert the string to an integer and add it to the inferred_classes vector
-    inferred_classes.push_back(std::stoi(classStr));
-  }
-  //commented so FPS: xx.xxxx data appears just below last line of accuracies.
-  //std::cout << std::endl;
+static void print_topk(const std::vector<std::pair<int, float>>& topk, int ground_truth_class) {
+
+  std::string lookupResult = lookup(topk[0].first);
+  std::string classStr = lookupResult.substr(0, lookupResult.find("_"));
+  int inferred_class_id = std::stoi(classStr);
+
+  // Append the inferred and real class to each vector
+  inferred_classes.push_back(inferred_class_id);
+  ground_truth_classes.push_back(ground_truth_class);
+
+/*   std::cout << "Top[" << 0 << "] Inferenced --> " 
+  << std::setw(2) << std::setfill('0') << inferred_class_id << ", " 
+  << std::setw(2) << std::setfill('0') << ground_truth_class
+  << " <-- Ground Truth." << std::endl; */
 }
 
 static const char* lookup(int index) {
