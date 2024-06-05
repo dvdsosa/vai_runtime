@@ -31,6 +31,10 @@
 #include <xir/graph/graph.hpp>
 #include <typeinfo>
 
+#include <thread>
+#include <future>
+#include <iostream>
+
 #include "vart/runner.hpp"
 #include "vart/runner_ext.hpp"
 #include "vitis/ai/collection_helper.hpp"
@@ -195,6 +199,13 @@ void printProgress(double percentage) {
     std::cout.flush();
 }
 
+void lazyLoading(std::promise<bool>& prom, ImageLoader& loader, std::vector<cv::Mat>& batchImages, std::vector<int>& batchLabels, std::vector<std::string>& batchImagePaths) {
+    // Load in another thread the next image
+    bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+    // return the bool value
+    prom.set_value(continueLoading);
+}
+
 int main(int argc, char* argv[]) {
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
@@ -271,13 +282,17 @@ int main(int argc, char* argv[]) {
           //std::cout << "EL INDICE VALE: " << i << std::endl;
           //std::cout << "Filename --> " << batchImagePaths[i] << std::endl;
 
+          auto start_time = std::chrono::high_resolution_clock::now();
+
           // Batch Size
           auto run_batch = dpu_batch;
           auto images = std::vector<cv::Mat>(run_batch);
+          std::promise<bool> prom1;
+          std::future<bool> fut1 = prom1.get_future();
+          std::thread t1;
 
           // PART A - takes 4.05ms average for batch size 1
           // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
-          auto start_time = std::chrono::high_resolution_clock::now();
           uint64_t data_in = 0u;
           size_t size_in = 0u;
           for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
@@ -290,9 +305,14 @@ int main(int argc, char* argv[]) {
             setImageRGB(images[batch_idx], (void*)data_in, input_scale);
           }
           // end PART A
-          auto end_time = std::chrono::high_resolution_clock::now();
-          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-          executionTimes.push_back(duration.count());
+
+          // launch thread for PARTC
+          // PART C - takes 14.735ms average for batch size 1, 15.057ms average for batch size 2
+          if (i == (nowBatchSize - 1)) {
+            t1 = std::thread(lazyLoading, std::ref(prom1), std::ref(loader), std::ref(batchImages), std::ref(batchLabels), std::ref(batchImagePaths));
+//            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+          }
+          // end PART C
 
           // PART B - takes 10ms average for batch size 1
           // sync data for input
@@ -302,6 +322,7 @@ int main(int argc, char* argv[]) {
           }
           // start the dpu
           auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
+          // load the next batch before waiting for the DPU
           auto status = runner->wait((int)v.first, -1);
           CHECK_EQ(status, 0) << "failed to run dpu";
           // sync data for output
@@ -317,17 +338,17 @@ int main(int argc, char* argv[]) {
           }
           // end PART B
 
-
-          // PART C - takes 14.735ms average for batch size 1, 15.057ms average for batch size 2
-          // load the next batch before waiting for the DPU
-          if (i == (nowBatchSize - 1)) {
-            continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
-          }
-          // end PART C
-          //std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
-
           printProgress(double(iteration) / limit);
           iteration += run_batch;
+
+          if (t1.joinable()) {
+            fut1.wait();
+            t1.join();
+            continueLoading = fut1.get();
+          }
+          auto end_time = std::chrono::high_resolution_clock::now();
+          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+          executionTimes.push_back(duration.count());
       }
       nowBatchSize = batchImages.size();
   }
@@ -338,17 +359,12 @@ int main(int argc, char* argv[]) {
     sum += time;
   }
   double averageExecutionTime = sum / executionTimes.size();
-  std::cout << "Average Execution Time: " << averageExecutionTime << " ms" << std::endl;
-
-
-
-  auto end = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> diff = end-start;
+  std::cout << std::endl << "Average Execution Time: " << averageExecutionTime << " ms" << std::endl;
 
   // Calculate average FPS
-  std::cout << std::endl << std::endl << "Total number of images: " << iteration << std::endl;
-  std::cout << "Time elapsed: " << diff.count() << " seconds" << std::endl;
-
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> diff = end-start;
+  std::cout << std::endl << "Total number of processed images: " << iteration << std::endl;
   double avg_fps = iteration / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
