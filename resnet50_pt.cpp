@@ -204,7 +204,7 @@ int main(int argc, char* argv[]) {
   std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
   int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
-  int batch_size = 1;
+  int batch_size = 2;
 
   // Get all the image paths and labels  
   std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
@@ -256,14 +256,18 @@ int main(int argc, char* argv[]) {
   std::vector<cv::Mat> batchImages;
   std::vector<int> batchLabels;
   int iteration = 0;
+  bool continueLoading = loader.nextBatch(batchImages, batchLabels);
+  int nowBatchSize = batchImages.size();
+
   // loop for running input images
-  while (loader.nextBatch(batchImages, batchLabels) && (iteration < limit)){
+  while (continueLoading && (iteration < limit)){
       // Aquí puedes procesar el lote de imágenes
-      for (size_t i = (batchImages.size() - batch_size); i < batchImages.size(); ++i) {
+      for (size_t i = (nowBatchSize - batch_size); i < nowBatchSize; ++i) {
+          std::cout << "EL INDICE VALE: " << i << std::endl;
 
           // Batch Size
           auto run_batch = dpu_batch;
-          auto images = std::vector<cv::Mat>(run_batch);
+/*           auto images = std::vector<cv::Mat>(run_batch);
 
           // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
           uint64_t data_in = 0u;
@@ -298,11 +302,16 @@ int main(int argc, char* argv[]) {
             auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
             // print the result
             print_topk(topk, batchLabels[i]);
+          } */
+
+          if (i == (nowBatchSize - 1)) {
+            continueLoading = loader.nextBatch(batchImages, batchLabels);
           }
 
           printProgress(double(iteration) / limit);
           iteration += run_batch;
       }
+      nowBatchSize = batchImages.size();
   }
 
   auto end = std::chrono::high_resolution_clock::now();
@@ -315,7 +324,7 @@ int main(int argc, char* argv[]) {
   double avg_fps = iteration / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
-  // Calculate precision
+/*   // Calculate precision
   int true_positives = 0;
   int false_positives = 0;
   int false_negatives = 0;
@@ -338,7 +347,7 @@ int main(int argc, char* argv[]) {
 
   // Print the results
   std::cout << "Accuracy: " << accuracy*100 << "%, Precision: " << precision*100 << "%, Recall: " << recall*100 << "%, F1 Score: " << f1_score*100 << "%" << std::endl;
- 
+  */
   return 0;
 }
 

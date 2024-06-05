@@ -105,31 +105,39 @@ int main(int argc, char* argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Time elapsed: " << duration.count() << " ms" << std::endl;
     
+    int batch_size = 4;
     // Create the ImageLoader
-    ImageLoader loader(imagePaths, labels, 1, cv::Size(224, 224));
+    ImageLoader loader(imagePaths, labels, batch_size, cv::Size(224, 224));
 
     // Iterate over the batches of images
     std::vector<cv::Mat> batchImages;
     std::vector<int> batchLabels;
     std::vector<std::string> batchImagePaths;
-    int limit = 10; // Set the limit here
+    int limit = 16; // Set the limit here
     int iteration = 0;
+    bool continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+    int nowBatchSize = batchImages.size();
 
-    while (loader.nextBatch(batchImages, batchLabels, batchImagePaths) && (iteration < limit)){
+    while ( continueLoading && (iteration < limit)){
         start = std::chrono::high_resolution_clock::now();
         
         // Here you can process the batch of images
-        for (size_t i = (batchImages.size() - 1); i < batchImages.size(); ++i) {
+        for (size_t i = (nowBatchSize - batch_size); i < nowBatchSize; ++i) {
             std::cout <<  "VALOR DEL INDICE i: " << i << "<-- DEL BUCLE" << std::endl;
             std::cout << batchImagePaths[i] << std::endl;
             //std::cout << "Batch size: " << batchImages.size() << std::endl;
+
+            if (i == (nowBatchSize - 1)) {
+                continueLoading = loader.nextBatch(batchImages, batchLabels, batchImagePaths);
+            }
+            ++iteration;
         }
-        end = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time elapsed: " << duration.count() << " ms" << std::endl;
-        
+       
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        ++iteration;
+        nowBatchSize = batchImages.size();
     }
- 
+
+    end = std::chrono::high_resolution_clock::now();
+    duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Time elapsed: " << duration.count() << " ms" << std::endl;
 }
