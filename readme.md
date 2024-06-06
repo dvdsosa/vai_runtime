@@ -43,6 +43,8 @@ Source code forked from [Vitis-AI repo](https://github.com/Xilinx/Vitis-AI/tree/
 
 `sudo python resnet50_pytorch.py ../resnet50_DYB.xmodel [number_of_images_to_process]`
 
+When the optional argument [number_of_images_to_process] is not introduced, the script processes all the images of the provided path.
+
 # Steps to change the permissions of the DPU device
 When running any of the above Python or C++ programs, these need to be executed as root by using the sudo command. This is because the dpu device needs root permissions, as shown below:
 

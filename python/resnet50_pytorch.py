@@ -221,7 +221,7 @@ def main(argv):
         fix_scale=input_scale
         )
 
-    # When the user has not introduced the quantity of images to process
+    # When the user has not introduced the quantity of images to process set it to the max value
     if 'image_count' not in locals():
         image_count = len(val_loader)
     
