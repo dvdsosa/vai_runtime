@@ -6,7 +6,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/resnet50_pt",
-            "args": ["resnet50_DYB.xmodel", "../test01"],
+            "args": ["resnet50_DYB.xmodel", "../DYB-original/test", "5"],
             "_args": ["ResNet50_int_DYB.xmodel", "bicho1.jpg"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
