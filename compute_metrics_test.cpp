@@ -2,9 +2,7 @@
 #include <iostream>
 #include <vector>
 
-using namespace std;
-
-void compute_metrics(const vector<int>& ground_truth_classes, const vector<int>& inferred_classes, int num_classes) {
+void compute_metrics(const std::vector<int>& ground_truth_classes, const std::vector<int>& inferred_classes, int num_classes) {
     Py_Initialize();
 
     // Add the current directory to the Python path
@@ -38,10 +36,10 @@ void compute_metrics(const vector<int>& ground_truth_classes, const vector<int>&
                 double rec = PyFloat_AsDouble(PyTuple_GetItem(pValue, 2));
                 double f1 = PyFloat_AsDouble(PyTuple_GetItem(pValue, 3));
 
-                cout << "Accuracy: " << acc * 100 << "%" << endl;
-                cout << "Precision: " << prec * 100 << "%" << endl;
-                cout << "Recall: " << rec * 100 << "%" << endl;
-                cout << "F1 Score: " << f1 * 100 << "%" << endl;
+                std::cout << "Accuracy: " << acc * 100 << "%" << std::endl;
+                std::cout << "Precision: " << prec * 100 << "%" << std::endl;
+                std::cout << "Recall: " << rec * 100 << "%" << std::endl;
+                std::cout << "F1 Score: " << f1 * 100 << "%" << std::endl;
 
                 Py_DECREF(pValue);
             } else {
@@ -64,8 +62,8 @@ void compute_metrics(const vector<int>& ground_truth_classes, const vector<int>&
 }
 
 int main() {
-    vector<int> inferred_classes = {1, 0, 1, 0, 0, 1, 0, 1, 1, 0};
-    vector<int> ground_truth_classes = {1, 0, 1, 1, 0, 1, 0, 0, 1, 0};
+    std::vector<int> inferred_classes = {1, 0, 1, 0, 0, 1, 0, 1, 1, 0};
+    std::vector<int> ground_truth_classes = {1, 0, 1, 1, 0, 1, 0, 0, 1, 0};
     int num_classes = 2;
 
     compute_metrics(ground_truth_classes, inferred_classes, num_classes);
