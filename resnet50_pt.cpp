@@ -30,6 +30,7 @@
 #include <opencv2/opencv.hpp>
 #include <xir/graph/graph.hpp>
 #include <typeinfo>
+#include <Python.h>
 
 #include <thread>
 #include <future>
@@ -423,6 +424,66 @@ void dpuTask(SafeQueue<Image>& queue, Semaphore& semAC, std::string& xmodel_file
     }
 }
 
+void compute_metrics(const std::vector<int>& ground_truth_classes, const std::vector<int>& inferred_classes, int num_classes) {
+    Py_Initialize();
+
+    // Add the current directory to the Python path
+    PyRun_SimpleString("import sys");
+    PyRun_SimpleString("sys.path.append('.')");
+
+    PyObject* pName = PyUnicode_DecodeFSDefault("compute_metrics");
+    PyObject* pModule = PyImport_Import(pName);
+    Py_DECREF(pName);
+
+    if (pModule != nullptr) {
+        PyObject* pFunc = PyObject_GetAttrString(pModule, "compute_metrics");
+
+        if (PyCallable_Check(pFunc)) {
+            PyObject* pGroundTruth = PyList_New(ground_truth_classes.size());
+            PyObject* pInferred = PyList_New(inferred_classes.size());
+
+            for (size_t i = 0; i < ground_truth_classes.size(); ++i) {
+                PyList_SetItem(pGroundTruth, i, PyLong_FromLong(ground_truth_classes[i]));
+                PyList_SetItem(pInferred, i, PyLong_FromLong(inferred_classes[i]));
+            }
+
+            PyObject* pNumClasses = PyLong_FromLong(num_classes);
+            PyObject* pArgs = PyTuple_Pack(3, pGroundTruth, pInferred, pNumClasses);
+            PyObject* pValue = PyObject_CallObject(pFunc, pArgs);
+            Py_DECREF(pArgs);
+
+            if (pValue != nullptr) {
+                double acc = PyFloat_AsDouble(PyTuple_GetItem(pValue, 0));
+                double prec = PyFloat_AsDouble(PyTuple_GetItem(pValue, 1));
+                double rec = PyFloat_AsDouble(PyTuple_GetItem(pValue, 2));
+                double f1 = PyFloat_AsDouble(PyTuple_GetItem(pValue, 3));
+
+                std::cout << std::fixed << std::setprecision(2);
+                std::cout << "Accuracy: " << acc * 100 << "%" << std::endl;
+                std::cout << "Precision: " << prec * 100 << "%" << std::endl;
+                std::cout << "Recall: " << rec * 100 << "%" << std::endl;
+                std::cout << "F1 Score: " << f1 * 100 << "%" << std::endl;
+
+                Py_DECREF(pValue);
+            } else {
+                PyErr_Print();
+            }
+
+            Py_DECREF(pGroundTruth);
+            Py_DECREF(pInferred);
+            Py_DECREF(pNumClasses);
+        } else {
+            PyErr_Print();
+        }
+        Py_XDECREF(pFunc);
+        Py_DECREF(pModule);
+    } else {
+        PyErr_Print();
+    }
+
+    Py_Finalize();
+}
+
 int main(int argc, char* argv[]) {
 
   if (argc < 3) {
@@ -474,30 +535,35 @@ int main(int argc, char* argv[]) {
   double avg_fps = limit / diff.count();
   std::cout << std::endl << "Average FPS: " << avg_fps << std::endl;
 
-  // Calculate precision
-  int true_positives = 0;
-  int false_positives = 0;
-  int false_negatives = 0;
+  // Step 1: Create the mapping
+  // Create a set of integers that stores all the unique classes found in the ground_truth vector
+  // and do the same with the inferred_classes vector if there are any new classes.
+  std::set<int> unique_classes_set(ground_truth_classes.begin(), ground_truth_classes.end());
+  unique_classes_set.insert(inferred_classes.begin(), inferred_classes.end());
 
-  for (int i = 0; i < ground_truth_classes.size(); i++) {
-      if (ground_truth_classes[i] == inferred_classes[i]) {  // True Positive
-          true_positives += 1;
-      } else if (std::find(ground_truth_classes.begin(), ground_truth_classes.end(), inferred_classes[i]) == ground_truth_classes.end()) {  // False Positive
-          false_positives += 1;
-      } else {  // False Negative
-          false_negatives += 1;
-      }
+  // Map each label from the original class to a new label that will be consecutive.
+  std::map<int, int> class_mapping;
+  int new_label = 0;
+  for (int old_label : unique_classes_set) {
+      class_mapping[old_label] = new_label++;
   }
 
-  int total = true_positives + false_positives + false_negatives;
-  double accuracy = static_cast<double>(true_positives) / total;
-  double precision = static_cast<double>(true_positives) / (true_positives + false_positives);
-  double recall = static_cast<double>(true_positives) / (true_positives + false_negatives);
-  double f1_score = 2 * (precision * recall) / (precision + recall);
+  // Step 2: Apply the mapping
+  // Iterate over both vectors and replace the original labels with the new ones.
+  for (int& label : ground_truth_classes) {
+      label = class_mapping[label];
+  }
+  
+  for (int& label : inferred_classes) {
+      label = class_mapping[label];
+  }
 
-  // Print the results
-  std::cout << "Accuracy: " << accuracy*100 << "%, Precision: " << precision*100 << "%, Recall: " << recall*100 << "%, F1 Score: " << f1_score*100 << "%" << std::endl;
- 
+  // Calculate the number of unique classes and call compute_metrics
+  int num_classes = class_mapping.size();
+  std::cout << "Number of classes of the inferred images: " << num_classes << std::endl;
+
+  compute_metrics(ground_truth_classes, inferred_classes, num_classes);
+
   return 0;
 }
 
