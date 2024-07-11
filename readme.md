@@ -66,8 +66,15 @@ If you wish to restore the initial permissions of the /dev/dpu device, then:
 
 `sudo chmod u=rw,g=,o= /dev/dpu`
 
-# RESULTS
+# Git repository
+Add local repo to Bitbucket and Github accounts:
 
+	git remote add origin git@bitbucket.org:davidsosatrejo/vai_runtime.git
+	git remote set-url --add origin git@github.com:dvdsosa/vai_runtime.git
+	git remote -v
+	git push origin master
+
+# RESULTS
 
 ## C++
 
