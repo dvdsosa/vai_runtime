@@ -121,14 +121,14 @@ public:
         cond.notify_one();
     }
 
-    Image pop() {
-        std::unique_lock<std::mutex> lock(mutex);
-        while(queue.empty()) {
-            cond.wait(lock);
+    bool try_pop(T& value) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (queue.empty()) {
+            return false;
         }
-        Image value = queue.front();
+        value = std::move(queue.front());
         queue.pop();
-        return value;
+        return true;
     }
 };
 
@@ -227,7 +227,7 @@ private:
     size_t index;
 };
 
-std::vector<std::string> getAllImagePaths(const std::string& rootFolder) {
+std::vector<std::string> getAllImagePaths(const std::string& rootFolder, int limit) {
     std::vector<std::string> imagePaths;
     std::filesystem::path rootPath(rootFolder);
 
@@ -239,6 +239,9 @@ std::vector<std::string> getAllImagePaths(const std::string& rootFolder) {
     for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
         if (entry.is_regular_file() && entry.path().extension() == ".jpg") {
             imagePaths.push_back(entry.path().string());
+            if (limit > 0 && imagePaths.size() == limit) {
+                break;
+            }
         }
     }
 
@@ -275,7 +278,7 @@ void imageProducer(SafeQueue<Image>& queue, Semaphore& sem, int& limit, std::str
 
     int batch_size = 1;
     // Get all the image paths and labels  
-    std::vector<std::string> imagePaths = getAllImagePaths(rootFolder);
+    std::vector<std::string> imagePaths = getAllImagePaths(rootFolder, limit);
     std::vector<int> labels = extractNumbersFromPaths(imagePaths);
     // Update the value of limit if it is 0
     if (limit == 0) {
@@ -312,33 +315,38 @@ void imageProducer(SafeQueue<Image>& queue, Semaphore& sem, int& limit, std::str
 // Task image processing (consumer)
 void imageConsumer(SafeQueue<Image>& queue, SafeQueue<Image>& queue2, Semaphore& semB, Semaphore& semAC, int& run_batch) {
     float input_scale = 8;
-    
+    Image image;
+
     while(true) {
-        // Check if imageProducer has finished
-        if(semB.try_acquire()) {
-            semAC.notify(); // Notify the end of this task
-            break;
-        }
         // Preprocess the image
-        Image image = queue.pop();
-        auto images = std::vector<cv::Mat>(run_batch);
-        auto new_images = std::vector<cv::Mat>(run_batch);
+        if (queue.try_pop(image)) {
+          //Image image = queue.pop();
+          auto images = std::vector<cv::Mat>(run_batch);
+          auto new_images = std::vector<cv::Mat>(run_batch);
 
-        // PART A
-        // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
-        for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-          images[batch_idx] = preprocess_image(image.batchImages[batch_idx], cv::Size(224, 224));
-          new_images[batch_idx] = setImageRGB(images[batch_idx], input_scale);
+          // PART A
+          // preprocessing, resize the input image to a size of 224 x 224 (the model's input size)
+          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+            images[batch_idx] = preprocess_image(image.batchImages[batch_idx], cv::Size(224, 224));
+            new_images[batch_idx] = setImageRGB(images[batch_idx], input_scale);
+          }
+          // end PART A
+
+          Image preprocessed_image;
+          preprocessed_image.batchImages = new_images;
+          preprocessed_image.batchLabels = image.batchLabels;
+          preprocessed_image.batchImagePaths = image.batchImagePaths;
+          queue2.push(preprocessed_image);
         }
-        // end PART A
-
-        Image preprocessed_image;
-        preprocessed_image.batchImages = new_images;
-        preprocessed_image.batchLabels = image.batchLabels;
-        preprocessed_image.batchImagePaths = image.batchImagePaths;
-        queue2.push(preprocessed_image);
+        else
+        {
+          // Check if imageProducer has finished
+          if(semB.try_acquire()) {
+              semAC.notify(); // Notify the end of this task
+              break;
+          }
+        }
     }
-    semAC.notify(); // Notificar la finalización de la tarea AC
 }
 
 // preprocessing for resnet50
@@ -377,50 +385,55 @@ void dpuTask(SafeQueue<Image>& queue, Semaphore& semAC, std::string& xmodel_file
     auto height = input_tensor->get_shape().at(1); // 224 for resnet50
     auto width = input_tensor->get_shape().at(2); // by 224 for resnet50
 
+    Image preprocessed;
+
     while(true) {
-        // Check if ImageConsumer has finished
-        if(semAC.try_acquire()) {
-            break;
-        }
-        // Perform the inference
-        Image preprocessed = queue.pop();
 
-        uint64_t data_in = 0u;
-        size_t size_in = 0u;
-        auto images = std::vector<cv::Mat>(run_batch);
-        for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-          images[batch_idx] = preprocessed.batchImages[batch_idx];
-          // set the input image and preprocessing
-          std::tie(data_in, size_in) =
-              input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
-          CHECK_NE(size_in, 0u);
-          assignImageDpu(images[batch_idx], (void*)data_in);
+        if (queue.try_pop(preprocessed)) {
+          uint64_t data_in = 0u;
+          size_t size_in = 0u;
+          auto images = std::vector<cv::Mat>(run_batch);
+          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+            images[batch_idx] = preprocessed.batchImages[batch_idx];
+            // set the input image and preprocessing
+            std::tie(data_in, size_in) =
+                input_tensor_buffers[0]->data(std::vector<int>{batch_idx, 0, 0, 0});
+            CHECK_NE(size_in, 0u);
+            assignImageDpu(images[batch_idx], (void*)data_in);
 
-        }
+          }
 
-        // PART B - takes 10ms average for batch size 1
-        // sync data for input
-        for (auto& input : input_tensor_buffers) {
-          input->sync_for_write(0, input->get_tensor()->get_data_size() /
-                                      input->get_tensor()->get_shape()[0]);
+          // PART B - takes 10ms average for batch size 1
+          // sync data for input
+          for (auto& input : input_tensor_buffers) {
+            input->sync_for_write(0, input->get_tensor()->get_data_size() /
+                                        input->get_tensor()->get_shape()[0]);
+          }
+          // start the dpu
+          auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
+          // load the next batch before waiting for the DPU
+          auto status = runner->wait((int)v.first, -1);
+          CHECK_EQ(status, 0) << "failed to run dpu";
+          // sync data for output
+          for (auto& output : output_tensor_buffers) {
+            output->sync_for_read(0, output->get_tensor()->get_data_size() /
+                                        output->get_tensor()->get_shape()[0]);
+          }
+          // postprocessing
+          for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
+            auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
+            // print the result
+            print_topk(topk, preprocessed.batchLabels[batch_idx]);
+          }
+          //end PART B
+        } 
+        else 
+        {
+          // Check if ImageConsumer has finished
+          if(semAC.try_acquire()) {
+              break;
+          }
         }
-        // start the dpu
-        auto v = runner->execute_async(input_tensor_buffers, output_tensor_buffers);
-        // load the next batch before waiting for the DPU
-        auto status = runner->wait((int)v.first, -1);
-        CHECK_EQ(status, 0) << "failed to run dpu";
-        // sync data for output
-        for (auto& output : output_tensor_buffers) {
-          output->sync_for_read(0, output->get_tensor()->get_data_size() /
-                                      output->get_tensor()->get_shape()[0]);
-        }
-        // postprocessing
-        for (auto batch_idx = 0; batch_idx < run_batch; ++batch_idx) {
-          auto topk = post_process(output_tensor_buffers[0], output_scale, batch_idx);
-          // print the result
-          print_topk(topk, preprocessed.batchLabels[batch_idx]);
-        }
-        //end PART B
     }
 }
 
@@ -488,7 +501,7 @@ int main(int argc, char* argv[]) {
 
   if (argc < 3) {
     std::cout << "usage: " << argv[0]
-         << " <resnet50.xmodel> <folder_path> [limit] [random]\n";
+         << " <resnet50.xmodel> <folder_path> [limit]\n";
     return 0;
   }
   SafeQueue<Image> queue1;
@@ -496,7 +509,7 @@ int main(int argc, char* argv[]) {
   Semaphore semB(0), semAC(0);
 
   auto xmodel_file = std::string(argv[1]);
-  std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-original/test";
+  std::string rootFolder = (argc > 2) ? std::string(argv[2]) : "../DYB-linearHead/test";
   int limit = (argc > 3 && std::isdigit(argv[3][0])) ? std::stoi(argv[3]) : 0;
   bool random = (argc > 3 && std::string(argv[argc-1]) == "random");
 
@@ -545,23 +558,49 @@ int main(int argc, char* argv[]) {
   std::map<int, int> class_mapping;
   int new_label = 0;
   for (int old_label : unique_classes_set) {
-      class_mapping[old_label] = new_label++;
+      class_mapping[old_label] = ++new_label;
   }
+
+/*
+  for (const auto& pair : class_mapping) {
+      std::cout << "Old Label: " << pair.first << ", New Label: " << pair.second << std::endl;
+  }
+*/
 
   // Step 2: Apply the mapping
   // Iterate over both vectors and replace the original labels with the new ones.
   for (int& label : ground_truth_classes) {
       label = class_mapping[label];
   }
-  
   for (int& label : inferred_classes) {
       label = class_mapping[label];
   }
 
+  // Step 3: Due to vector indexing starting at 0, we need to subtract 1 from each element in both vectors.
+  // Subtract 1 from each element in inferred_classes
+  for (int& value : inferred_classes) {
+      value -= 1;
+  }
+  // Subtract 1 from each element in ground_truth_classes
+  for (int& value : ground_truth_classes) {
+      value -= 1;
+  }
+
+/*
+  // PRINT THE CONTENTS OF BOTH VECTORS, for debugging purposes
+  // Ensure both vectors have the same size
+  if (inferred_classes.size() != ground_truth_classes.size()) {
+      std::cerr << "Error: Vectors are of different sizes." << std::endl;
+      return 1;
+  }
+  for (int i = 0; i < inferred_classes.size(); ++i) {
+      std::cout << "Inferenced --> " << inferred_classes[i] << ", " << ground_truth_classes[i] << " <-- Ground Truth." << std::endl;
+  }
+  // END OF PRINT THE CONTENTS OF BOTH VECTORS
+*/
+
   // Calculate the number of unique classes and call compute_metrics
   int num_classes = class_mapping.size();
-  std::cout << "Number of classes of the inferred images: " << num_classes << std::endl;
-
   compute_metrics(ground_truth_classes, inferred_classes, num_classes);
 
   return 0;
@@ -621,10 +660,10 @@ static void print_topk(const std::vector<std::pair<int, float>>& topk, int groun
   inferred_classes.push_back(inferred_class_id);
   ground_truth_classes.push_back(ground_truth_class);
 
-/*   std::cout << "Top[" << 0 << "] Inferenced --> " 
+  /* std::cout << "Top[" << 0 << "] Inferenced --> " 
   << std::setw(2) << std::setfill('0') << inferred_class_id << ", " 
   << std::setw(2) << std::setfill('0') << ground_truth_class
-  << " <-- Ground Truth." << std::endl; */
+  << " <-- Ground Truth." << std::endl;*/
 }
 
 static const char* lookup(int index) {
