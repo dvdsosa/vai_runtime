@@ -46,14 +46,43 @@ First, compile the `resnet50_pt.cpp ` file using the configuration contained in 
                 "-O0",
 ```
 
-Second, set the debugger path in launch.json
+Second, set the input args and the debugger path in launch.json:
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(gdb) Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/resnet50_pt",
+            "args": ["resnet50_DYB.xmodel", "../DYB-original/test", "5"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "targetArchitecture": "arm"
+        }
+    ]
+}
+```
 
 That's all! You're ready now to debug in VSCode connected to the Kria via SSH =)
 
 Instructions for a normal use:
 
 ```bash
-$ sudo ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/testKria [3000]
+sudo ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/testKria [3000]
 ```
 
 P.S.: in this folder, the file main.cc is not used, instead, resnet50_pt.cpp has been copied from `/Vitis-AI/examples/vai_runtime/resnet50_pt` folder of the Vitis-AI 3.0 docker image.
@@ -85,7 +114,7 @@ Aborted
 then, execute the following command to grant permission to the DPU device:
 
 ```bash
-$ sudo chmod a+rw /dev/dpu
+sudo chmod a+rw /dev/dpu
 ```
 
 ---
@@ -146,6 +175,13 @@ i.e.:
 # 2. Type `:wq` for save and quit. If error, type `:w !sudo tee %` and press `Enter` to save with root privileges.
 ```
 More info at [AMD Knowledge Base](https://support.xilinx.com/s/article/DPU-fingerprint-ERROR?language=en_US).
+
+## ModuleNotFoundError: No module named 'torch'
+
+Use sudo -E to preserve the environment variables:
+```bash
+sudo -E ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
+````
 
 # Git repository
 Add local repo to Bitbucket and Github accounts:
