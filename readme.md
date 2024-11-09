@@ -7,8 +7,8 @@ After compiling a FP32 model to INT8, we present here the steps for compiling th
 When logged in the host computer, in the terminal, copy the image test set by using the command below:
 
 ```bash
-$ cd ~/tesis/DYB-linearHead
-$ scp -r test petalinux@192.168.1.142:~/DYB-linearHead/testKria
+cd ~/tesis/DYB-linearHead
+scp -r test petalinux@192.168.1.142:~/DYB-linearHead/test
 ```
 
 ## Compile and run the C++ file
@@ -18,11 +18,11 @@ In terms of FPS, we achieved the optimal performance when compiling and running 
 Compile the `resnet50_pt.cpp` file removing the "-g" argument and changing the "-O0" by "-Ofast" in `task.json` configuration file. Then, you are ready to go using the below syntax:
 
 ```bash
-$ cd ~/vai_runtime
-$ ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/testKria [1000]
+cd ~/vai_runtime
+./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test [1000]
 ```
 
-Where the number 1000 between brackets is an optional value to control the total quantity of files intended for inference.
+Where the number 1000 between brackets is an optional value to control the total quantity of files intended for inference. Use this option without the brackets.
 
 If an error arises due to *cannot open /dev/dpu*, refer to [this](#change-dpu-device-permissions) section.
 
@@ -82,12 +82,10 @@ That's all! You're ready now to debug in VSCode connected to the Kria via SSH =)
 Instructions for a normal use:
 
 ```bash
-sudo ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/testKria [3000]
+sudo ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
 ```
 
-P.S.: in this folder, the file main.cc is not used, instead, resnet50_pt.cpp has been copied from `/Vitis-AI/examples/vai_runtime/resnet50_pt` folder of the Vitis-AI 3.0 docker image.
-
-Source code forked from [Vitis-AI repo](https://github.com/Xilinx/Vitis-AI/tree/master/examples/vai_runtime/resnet50_pt).
+P.S.: in this folder, the file main.cc is not used, instead, our main processing file resnet50_pt.cpp has been copied from `/Vitis-AI/examples/vai_runtime/resnet50_pt` folder of the [Vitis-AI 3.0 GitHub repo](https://github.com/Xilinx/Vitis-AI/tree/master/examples/vai_runtime/resnet50_pt).
 
 ## Run the Python file
 
@@ -136,7 +134,7 @@ crw------- 1 root root 10, 124 Jun  1 01:56 /dev/dpu
 To prevent using sudo, specially when debugging the C++ program, we can make the /dev/dpu device available to any user using the command below (you need to execute it in every restart of the Petalinux system):
 
 ```bash
-$ sudo chmod a+rw /dev/dpu
+sudo chmod a+rw /dev/dpu
 ```
 
 Now, we can check how the dpu permissions were changed:
@@ -149,7 +147,7 @@ crw-rw-rw- 1 root root 10, 124 Jun  1 01:56 /dev/dpu
 If you wish to restore the initial permissions of the /dev/dpu device, then:
 
 ```bash
-$ sudo chmod u=rw,g=,o= /dev/dpu
+sudo chmod u=rw,g=,o= /dev/dpu
 ```
 
 ## Set the correct fingerprint
@@ -174,6 +172,9 @@ i.e.:
 # 1. Exit insert mode if you are in it by pressing `Esc`.
 # 2. Type `:wq` for save and quit. If error, type `:w !sudo tee %` and press `Enter` to save with root privileges.
 ```
+
+For saving the new fingerprint and performing this change only once on your Vitis-AI docker image, commit your docker running instance by the command `docker commit <container_id_or_name> <new_image_name>`.
+
 More info at [AMD Knowledge Base](https://support.xilinx.com/s/article/DPU-fingerprint-ERROR?language=en_US).
 
 ## ModuleNotFoundError: No module named 'torch'
@@ -182,6 +183,10 @@ Use sudo -E to preserve the environment variables:
 ```bash
 sudo -E ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
 ````
+
+# Model visualization
+
+[Link to several websites](https://www.kaggle.com/discussions/getting-started/253300) for constructing a visual representation of our model.
 
 # Git repository
 Add local repo to Bitbucket and Github accounts:
