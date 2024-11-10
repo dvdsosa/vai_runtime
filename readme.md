@@ -100,6 +100,35 @@ $ sudo python resnet50_pytorch.py ../resnet50_DYB.xmodel [number_of_images_to_pr
 When the optional argument [number_of_images_to_process] is not introduced, the script processes all the images of the provided path.
 
 # Misc
+
+## Load a diferent DPU configuration
+
+Once the Petalinux image is built, including the custom PL (.XSA file), and burnt into a microSD, boot it, log in, 
+and copy the folder that contains the app files (myApp.bit.bin, myApp.dtbo, shell.json) to `/lib/firmware/xilinx/` folder.
+Finally, load the DPU app with:
+```bash
+sudo xmutil unloadapp
+sudo xmutil loadapp myApp
+```
+Check which DPU configuration is running with the command:
+```bash
+sudo xdputil query
+```
+
+Check the available apps for the DPU stored at:
+```bash
+ls /lib/firmware/xilinx
+```
+
+For loading a specific app by default at startup, change dir to:
+```bash
+cd /etc/dfx-mgrd
+```
+...duplicate the default file 'k26-starter-kits' but with the name 'dpu325', and edit it with the text 'dpu325'. 
+Finally, modify the content of default_firmware file with the text 'dpu325', and that's the new app that will load by default.
+
+Source of information: [AMD Support Forums - Automatic loading of an accelerated application](https://adaptivesupport.amd.com/s/question/0D54U00008FFBLUSA5/automatic-loading-of-an-accelerated-application).
+
 ## Change DPU device permissions
 
 **TL;DR**: if having the following error when executing the C++ program:
@@ -182,11 +211,16 @@ More info at [AMD Knowledge Base](https://support.xilinx.com/s/article/DPU-finge
 Use sudo -E to preserve the environment variables:
 ```bash
 sudo -E ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
-````
+```
 
 # Model visualization
 
 [Link to several websites](https://www.kaggle.com/discussions/getting-started/253300) for constructing a visual representation of our model.
+
+# Kria™ SOM: Hardware Platform Statistics
+
+It is possible to monitor the power consumption, temperature, free memory of the SOM, etc. via the dashboard served by the Petalinux internal webserver at the address: 
+[http://192.168.1.142:5006/kria-dashboard](http://192.168.1.142:5006/kria-dashboard). Change the IP according to your Kria IP address.
 
 # Git repository
 Add local repo to Bitbucket and Github accounts:
