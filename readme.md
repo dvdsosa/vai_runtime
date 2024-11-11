@@ -222,6 +222,34 @@ sudo -E ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
 It is possible to monitor the power consumption, temperature, free memory of the SOM, etc. via the dashboard served by the Petalinux internal webserver at the address: 
 [http://192.168.1.142:5006/kria-dashboard](http://192.168.1.142:5006/kria-dashboard). Change the IP according to your Kria IP address.
 
+It is also possible to extract the SOM parameters via the following command:
+```bash
+xmutil xlnx_platformstats
+```
+
+Or to access directly the power consumption via the following command:
+```bash
+cat /sys/class/hwmon/hwmon0/power1_input | awk '{print $1/1000000 " W"}'
+```
+
+Another [way](https://adaptivesupport.amd.com/s/question/0D52E00007G0okuSAB/power-estimates-on-kria-k26-som-wp529?language=en_US) (look third comment of the link) to acces the SOM power consumption:
+```bash
+cat /sys/bus/i2c/drivers/ina260-adc/1-0040/iio\:device1/in_power2_raw | awk '{print $1/100 " W"}'
+```
+
+# Switch on/off the PL
+
+Using this command, but you need to include `/sys/kernel/debug/zynqmp-firmware/pm` when compiling petalinux ([source](https://adaptivesupport.amd.com/s/article/68514?language=en_US)):
+```bash
+sudo xmutil pwrctl --status
+```
+
+Also, [download](https://github.com/Xilinx/xmutil/blob/master/xmutil) the xmutil code in python, edit the code and add at the end of the product_name function, the line:
+```python
+    prod = 'kv260'
+```
+... just before the `return prod`
+
 # Git repository
 Add local repo to Bitbucket and Github accounts:
 
