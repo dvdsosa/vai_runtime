@@ -1,10 +1,16 @@
 #!/bin/bash
 
 # Number of runs
-num_runs=30
+num_runs=1
 
 # Initialize sum of FPS
 sum_fps=0
+
+# Start monitor_power.sh script
+./monitor_power.sh &
+MONITOR_PID=$!
+
+echo $MONITOR_PID
 
 # Loop to run the command multiple times
 for ((i=1; i<=num_runs; i++))
@@ -22,6 +28,10 @@ do
     # Add the FPS value to the sum
     sum_fps=$(echo "$sum_fps + $fps" | bc)
 done
+
+# End monitor_power.sh script
+kill -TERM $MONITOR_PID
+wait $MONITOR_PID
 
 # Calculate the mean FPS
 mean_fps=$(echo "scale=4; $sum_fps / $num_runs" | bc)
