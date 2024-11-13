@@ -40,8 +40,6 @@ monitor_power() {
 monitor_power &
 MONITOR_PID=$!
 
-#MONITOR_PID=$!
-
 # Wait for a signal to stop monitoring
 trap "kill $MONITOR_PID; calculate_mean; rm -f $TEMP_FILE; exit" SIGINT SIGTERM
 
