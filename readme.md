@@ -195,7 +195,7 @@ If this is the case, when running the docker Vitis-AI image, configure the DPU f
 $ sudo vi /opt/vitis_ai/compiler/arch/DPUCZDX8G/KV260/arch.json
 i.e.:
 {
-    "fingerprint":"0x101000047010407"
+    "target":"0x101000047010407"
 }
 # Once the fingerprint has been changed, quit and save in vi with the following:
 # 1. Exit insert mode if you are in it by pressing `Esc`.
