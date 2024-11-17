@@ -19,7 +19,7 @@ Compile the `resnet50_pt.cpp` file removing the "-g" argument and changing the "
 
 ```bash
 cd ~/vai_runtime
-./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test [1000]
+./resnet50_pt resnet50_int8.xmodel ../DYB-linearHead/test [1000]
 ```
 
 Where the number 1000 between brackets is an optional value to control the total quantity of files intended for inference. Use this option without the brackets.
@@ -57,7 +57,7 @@ Second, set the input args and the debugger path in launch.json:
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/resnet50_pt",
-            "args": ["resnet50_DYB.xmodel", "../DYB-original/test", "5"],
+            "args": ["resnet50_int8.xmodel", "../DYB-original/test", "5"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
@@ -82,7 +82,7 @@ That's all! You're ready now to debug in VSCode connected to the Kria via SSH =)
 Instructions for a normal use:
 
 ```bash
-sudo ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
+sudo ./resnet50_pt resnet50_int8.xmodel ../DYB-linearHead/test
 ```
 
 P.S.: in this folder, the file main.cc is not used, instead, our main processing file resnet50_pt.cpp has been copied from `/Vitis-AI/examples/vai_runtime/resnet50_pt` folder of the [Vitis-AI 3.0 GitHub repo](https://github.com/Xilinx/Vitis-AI/tree/master/examples/vai_runtime/resnet50_pt).
@@ -93,8 +93,8 @@ The development of the Python code was abandoned due to low FPS performance, so 
 
 ```bash
 $ cd ~/vai_runtime/python
-$ sudo python resnet50.py ../resnet50_DYB.xmodel [number_of_images_to_process]
-$ sudo python resnet50_pytorch.py ../resnet50_DYB.xmodel [number_of_images_to_process]
+$ sudo python resnet50.py ../resnet50_int8.xmodel [number_of_images_to_process]
+$ sudo python resnet50_pytorch.py ../resnet50_int8.xmodel [number_of_images_to_process]
 ```
 
 When the optional argument [number_of_images_to_process] is not introduced, the script processes all the images of the provided path.
@@ -210,7 +210,7 @@ More info at [AMD Knowledge Base](https://support.xilinx.com/s/article/DPU-finge
 
 Use sudo -E to preserve the environment variables:
 ```bash
-sudo -E ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
+sudo -E ./resnet50_pt resnet50_int8.xmodel ../DYB-linearHead/test
 ```
 
 # Model visualization
@@ -265,7 +265,7 @@ Add local repo to Bitbucket and Github accounts:
 Processing a DYB-PlanktonNet test set comprised of 7147 images.
 
 ```bash
-xilinx-kv260-starterkit-20232:~/vai_runtime$ ./resnet50_pt resnet50_DYB.xmodel ../DYB-linearHead/test
+xilinx-kv260-starterkit-20232:~/vai_runtime$ ./resnet50_pt resnet50_int8.xmodel ../DYB-linearHead/test
 [======================================================================] 100 %
 Total number of processed images: 7147
 

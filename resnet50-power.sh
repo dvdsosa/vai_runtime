@@ -16,8 +16,8 @@ do
     echo "Run #$i"
     # Run the command and capture the output
     #output=$(./resnet50_pt_fps resnet50_int8.xmodel ../DYB-linearHead/test)
-    #output=$(./resnet50_pt_fps resnet50_iterative-coarse-grained-pruned.xmodel ../DYB-linearHead/test)
-    output=$(./resnet50_pt_fps resnet50_one-step-coarse-grained-pruned.xmodel ../DYB-linearHead/test)
+    output=$(./resnet50_pt_fps resnet50_iterative.xmodel ../DYB-linearHead/test)
+    #output=$(./resnet50_pt_fps resnet50_one_step.xmodel ../DYB-linearHead/test)
     
     # Extract the Average FPS value using grep and awk
     fps=$(echo "$output" | grep "Average FPS:" | awk '{print $3}')
