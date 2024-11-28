@@ -244,6 +244,10 @@ Using this command, but you need to include `/sys/kernel/debug/zynqmp-firmware/p
 sudo xmutil pwrctl --status
 ```
 
+```bash
+sudo xmutil pwrctl --off
+```
+
 Also, [download](https://github.com/Xilinx/xmutil/blob/master/xmutil) the xmutil code in python, edit the code and add at the end of the product_name function, the line:
 ```python
     prod = 'kv260'
