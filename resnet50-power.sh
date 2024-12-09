@@ -19,7 +19,8 @@ do
     #output=$(./resnet50_pt_fps resnet50_iterative.xmodel ../DYB-linearHead/test)
     #output=$(./resnet50_pt_fps resnet50_one_step.xmodel ../DYB-linearHead/test)
     output=$(./resnet50_pt_fps resnet50_ofa.xmodel ../DYB-linearHead/test)
-    
+    #output=$(./resnet50_pt_fps resnet50_fastNAS.xmodel ../DYB-linearHead/test)
+
     # Extract the Average FPS value using grep and awk
     fps=$(echo "$output" | grep "Average FPS:" | awk '{print $3}')
     
